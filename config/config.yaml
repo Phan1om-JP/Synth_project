@@ -1,0 +1,69 @@
+project:
+  name: synthrad2023
+  seed: 15
+  output_dir: outputs
+
+paths:
+  data_root: /storage/student4/synthrad
+  task1_train: /storage/student4/synthrad/Task1/Task1/brain
+  task1_val: /storage/student4/synthrad/Task1_val/Task1/brain
+  stats_path: /storage/student4/synthrad/normalisation_stats.json
+  cache_dir: /storage/student4/synthrad/cache
+  checkpoint_dir: /storage/student4/synthrad/checkpoints
+  output_dir: /storage/student4/synthrad/outputs
+
+preprocessing:
+  ct_clip_min: -1000.0
+  ct_clip_max: 1000.0
+  min_mask_coverage: 0.10
+  n4_bias_correction: true
+  brain_extraction: true
+  target_size: 320
+
+data:
+  plane: axial
+  spatial_mode: 2D
+  n_adjacent: 3
+  patch_size: 96
+  train_val_split: 0.9
+  batch_size: 8
+  num_workers: 4
+  pin_memory: true
+
+model:
+  type: unet
+  in_ch: 1
+  out_ch: 1
+  base_ch: 64
+
+training:
+  loss_type: l1
+  lr: 2.0e-4
+  epochs: 1000
+  val_every: 5
+  save_every: 10
+  early_stopping_patience: 15
+  gan_lambda: 0.1
+  multi_gpu: true
+
+registration:
+  transform_type: SyN
+  mni_radius:
+    PTV_thalamus: 12
+    OAR_brainstem: 14
+    OAR_cerebellum: 18
+    OAR_hippocampus: 8
+  mni_centers:
+    PTV_thalamus: [[-12, -16, 4], [12, -16, 4]]
+    OAR_brainstem: [[0, -32, -34]]
+    OAR_cerebellum: [[-24, -54, -30], [24, -54, -30]]
+    OAR_hippocampus: [[-26, -18, -16], [26, -18, -16]]
+
+dose:
+  photon_beam_angles: [0, 90, 180, 270]
+  proton_beam_angles: [0, 90]
+  gamma_dd: 0.02
+  gamma_dta_mm: 2.0
+  gamma_threshold: 0.1
+  use_matrad: false
+  matrad_path: /storage/student4/matRad

@@ -1,0 +1,11 @@
+torch>=1.13.0
+torchvision
+nibabel
+numpy
+scipy
+scikit-image
+tqdm
+pyyaml
+antspyx
+antspynet
+matplotlib
