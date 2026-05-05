@@ -4,13 +4,13 @@ project:
   output_dir: outputs
 
 paths:
-  data_root: /storage/student4/synthrad
-  task1_train: /storage/student4/synthrad/Task1/Task1/brain
-  task1_val: /storage/student4/synthrad/Task1_val/Task1/brain
-  stats_path: /storage/student4/synthrad/normalisation_stats.json
-  cache_dir: /storage/student4/synthrad/cache
-  checkpoint_dir: /storage/student4/synthrad/checkpoints
-  output_dir: /storage/student4/synthrad/outputs
+  data_root: /storage/student4/synth/data
+  task1_train: /storage/student4/synth/data/Task1/Task1/brain
+  task1_val: /storage/student4/synth/data/Task1_val/Task1/brain
+  stats_path: /storage/student4/synth/data/normalisation_stats.json
+  cache_dir: /storage/student4/synth/cache
+  checkpoint_dir: /home/student4/synth_project/checkpoints
+  output_dir: /home/student4/synth_project/outputs
 
 preprocessing:
   ct_clip_min: -1000.0
@@ -67,3 +67,4 @@ dose:
   gamma_threshold: 0.1
   use_matrad: false
   matrad_path: /storage/student4/matRad
+
