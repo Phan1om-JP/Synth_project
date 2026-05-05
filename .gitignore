@@ -121,7 +121,6 @@ predictions/
 inference/
 checkpoints/
 weights/
-models/
 trained_models/
 artifacts/
 cache/

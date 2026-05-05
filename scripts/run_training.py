@@ -1,6 +1,9 @@
 import os
 import sys
+import time
 import random
+from collections import deque
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -12,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config_loader import load_config
 from preprocessing.preprocess import load_or_compute_stats, build_cache
 from data.dataset import build_dataloaders
-from models.unet import build_model
+from models.gan import build_model
 from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss
 
 
@@ -21,6 +24,13 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def _fmt_seconds(s):
+    s = int(s)
+    h, m = divmod(s, 3600)
+    m, s = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def run_validation(model, loader, stats, device):
@@ -37,10 +47,8 @@ def run_validation(model, loader, stats, device):
             ct_min  = stats["ct_clip_min"]
             ct_max  = stats["ct_clip_max"]
 
-            pred_np = np.clip(
-                pred.cpu().numpy()[:, 0] * ct_std + ct_mean, ct_min, ct_max)
-            ct_np   = np.clip(
-                ct.cpu().numpy()[:, 0]   * ct_std + ct_mean, ct_min, ct_max)
+            pred_np = np.clip(pred.cpu().numpy()[:, 0] * ct_std + ct_mean, ct_min, ct_max)
+            ct_np   = np.clip(ct.cpu().numpy()[:, 0]   * ct_std + ct_mean, ct_min, ct_max)
             mask_np = mask.cpu().numpy()[:, 0]
 
             for b in range(pred_np.shape[0]):
@@ -56,7 +64,7 @@ def run_validation(model, loader, stats, device):
                 psnr_list.append(psnr_fn(c_sl, p_sl, data_range=float(data_range)))
 
     return {
-        "mae":  float(np.mean(mae_list))  if mae_list  else 0.0,
+        "mae" : float(np.mean(mae_list))  if mae_list  else 0.0,
         "ssim": float(np.mean(ssim_list)) if ssim_list else 0.0,
         "psnr": float(np.mean(psnr_list)) if psnr_list else 0.0,
     }
@@ -75,15 +83,15 @@ def train(cfg_path="config/config.yaml"):
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
     generator, discriminator     = build_model(cfg)
 
-    device    = cfg["device"]
-    loss_type = cfg["training"]["loss_type"]
-    lr        = cfg["training"]["lr"]
-    epochs    = cfg["training"]["epochs"]
-    val_every = cfg["training"]["val_every"]
+    device     = cfg["device"]
+    loss_type  = cfg["training"]["loss_type"]
+    lr         = cfg["training"]["lr"]
+    epochs     = cfg["training"]["epochs"]
+    val_every  = cfg["training"]["val_every"]
     save_every = cfg["training"]["save_every"]
-    patience  = cfg["training"]["early_stopping_patience"]
+    patience   = cfg["training"]["early_stopping_patience"]
     gan_lambda = cfg["training"]["gan_lambda"]
-    ckpt_dir  = cfg["paths"]["checkpoint_dir"]
+    ckpt_dir   = cfg["paths"]["checkpoint_dir"]
 
     opt_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.5, 0.999))
     opt_D = None
@@ -95,7 +103,11 @@ def train(cfg_path="config/config.yaml"):
     patience_counter = 0
     best_ckpt_path   = os.path.join(ckpt_dir, "best_model.pt")
 
+    epoch_times = deque(maxlen=5)
+    train_start = time.time()
+
     for epoch in range(1, epochs + 1):
+        epoch_start = time.time()
         generator.train()
         epoch_loss = 0.0
 
@@ -127,6 +139,12 @@ def train(cfg_path="config/config.yaml"):
 
             epoch_loss += loss.item()
 
+        epoch_elapsed = time.time() - epoch_start
+        epoch_times.append(epoch_elapsed)
+        avg_epoch_time = sum(epoch_times) / len(epoch_times)
+        remaining_epochs = epochs - epoch
+        eta = avg_epoch_time * remaining_epochs
+
         avg_loss = epoch_loss / len(tr_loader)
         history["train_loss"].append(avg_loss)
 
@@ -136,10 +154,15 @@ def train(cfg_path="config/config.yaml"):
             history["val_ssim"].append(val_metrics["ssim"])
             history["val_psnr"].append(val_metrics["psnr"])
 
-            print(f"Epoch {epoch:04d} | loss {avg_loss:.4f} | "
-                  f"MAE {val_metrics['mae']:.4f} | "
-                  f"SSIM {val_metrics['ssim']:.4f} | "
-                  f"PSNR {val_metrics['psnr']:.2f}")
+            print(
+                f"Epoch {epoch:04d}/{epochs} | "
+                f"loss {avg_loss:.4f} | "
+                f"MAE {val_metrics['mae']:.4f} | "
+                f"SSIM {val_metrics['ssim']:.4f} | "
+                f"PSNR {val_metrics['psnr']:.2f} | "
+                f"epoch {epoch_elapsed:.0f}s | "
+                f"ETA {_fmt_seconds(eta)}"
+            )
 
             if val_metrics["mae"] < best_val_mae:
                 best_val_mae     = val_metrics["mae"]
@@ -162,6 +185,13 @@ def train(cfg_path="config/config.yaml"):
                 if patience_counter >= patience:
                     print(f"Early stopping at epoch {epoch}.")
                     break
+        else:
+            print(
+                f"Epoch {epoch:04d}/{epochs} | "
+                f"loss {avg_loss:.4f} | "
+                f"epoch {epoch_elapsed:.0f}s | "
+                f"ETA {_fmt_seconds(eta)}"
+            )
 
         if epoch % save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch:04d}.pt")
@@ -176,7 +206,8 @@ def train(cfg_path="config/config.yaml"):
             }, ckpt_path)
             print(f"  Checkpoint saved: {ckpt_path}")
 
-    print(f"Training done. Best MAE: {best_val_mae:.4f}")
+    total_time = time.time() - train_start
+    print(f"Training done. Best MAE: {best_val_mae:.4f} | Total time: {_fmt_seconds(total_time)}")
 
 
 if __name__ == "__main__":
