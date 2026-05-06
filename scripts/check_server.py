@@ -148,9 +148,12 @@ def check_dataset(cfg):
         tag    = PASS if exists else WARN
         print(f"  {tag} {label}: {path}")
         if exists and os.path.isdir(path) and label == "task1_train":
-            patients = [d for d in os.listdir(path)
-                        if os.path.isdir(os.path.join(path, d)) and d != "overview"]
-            print(f"        -> {len(patients)} patient folders found")
+            try:
+                n = sum(1 for e in os.scandir(path)
+                        if e.is_dir() and e.name != "overview")
+                print(f"        -> {n} patient folders")
+            except Exception:
+                pass
         if exists and label == "stats_path":
             try:
                 with open(path) as f:
@@ -160,11 +163,11 @@ def check_dataset(cfg):
             except Exception:
                 pass
         if exists and os.path.isdir(path) and label == "cache_dir":
-            patient_dirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
-            total_slices = sum(
-                len(os.listdir(os.path.join(path, d))) for d in patient_dirs
-            )
-            print(f"        -> {len(patient_dirs)} cached patients, {total_slices} slices")
+            try:
+                n_patients = sum(1 for e in os.scandir(path) if e.is_dir())
+                print(f"        -> {n_patients} cached patients")
+            except Exception:
+                pass
 
 
 def check_gpu_forward_pass():

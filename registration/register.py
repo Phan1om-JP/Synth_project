@@ -1,8 +1,6 @@
 import os
 import numpy as np
 import nibabel as nib
-import ants
-import antspynet
 
 
 MNI_STRUCTURES = {
@@ -37,6 +35,9 @@ def _make_sphere_mask(shape, affine, centers_mni, radius_mm):
 
 
 def generate_structures(patient_out_dir):
+    import ants
+    import antspynet
+
     mr_path    = os.path.join(patient_out_dir, "mr.nii.gz")
     struct_dir = os.path.join(patient_out_dir, "structures")
     os.makedirs(struct_dir, exist_ok=True)
