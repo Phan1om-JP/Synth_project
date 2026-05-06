@@ -1,0 +1,220 @@
+# =========================
+# macOS System Files
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# =========================
+# Python Cache / Build
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.env/
+.venv/
+env/
+ENV/
+.python-version
+
+# =========================
+# Jupyter / Colab
+# =========================
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# =========================
+# IDE / Editor Files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+
+# =========================
+# Logs / Debug
+# =========================
+*.log
+logs/
+log/
+*.out
+*.err
+nohup.out
+
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.secret
+*.token
+
+# =========================
+# Medical Imaging Data
+# =========================
+# Raw datasets
+raw_data/
+data/
+dataset/
+datasets/
+input/
+inputs/
+
+# MRI / CT folders
+mri/
+ct/
+pet/
+scan/
+scans/
+
+# DICOM / NIfTI / Imaging files
+*.dcm
+*.dicom
+*.nii
+*.nii.gz
+*.mha
+*.mhd
+*.nrrd
+*.img
+*.hdr
+*.raw
+
+# Large image exports
+*.tif
+*.tiff
+*.bmp
+*.png
+*.jpg
+*.jpeg
+
+# =========================
+# AI / ML Generated Outputs
+# =========================
+outputs/
+output/
+results/
+predictions/
+inference/
+checkpoints/
+weights/
+trained_models/
+artifacts/
+cache/
+
+# Model files
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.h5
+*.pkl
+*.joblib
+*.weights
+
+# =========================
+# Segmentation / Labels
+# =========================
+segmentations/
+masks/
+labels/
+annotations/
+
+# =========================
+# Temporary Medical Processing
+# =========================
+preprocessed/
+normalized/
+registered/
+resampled/
+augmented/
+converted/
+intermediate/
+cache_data/
+
+# =========================
+# Visualization / Figures
+# =========================
+figures/
+plots/
+visualizations/
+preview/
+
+# =========================
+# TensorBoard / ML Logs
+# =========================
+runs/
+wandb/
+mlruns/
+tensorboard/
+
+# =========================
+# Testing / Coverage
+# =========================
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+
+# =========================
+# Node / Frontend (future-proof)
+# =========================
+node_modules/
+.npm/
+.next/
+out/
+
+# =========================
+# Docker / Containers
+# =========================
+.docker/
+*.tar
+
+# =========================
+# Archive Files
+# =========================
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+
+# =========================
+# Backup Files
+# =========================
+backup/
+backups/
+*.backup
+*.old
+
+config/private.yaml
+
+# =========================
+# Optional: Keep Empty Folder Structure
+# =========================
+# Example:
+# data/*
+# !data/.gitkeep
