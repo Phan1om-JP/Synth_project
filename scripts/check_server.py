@@ -174,28 +174,39 @@ def check_gpu_forward_pass():
     section("GPU Forward Pass (smoke test)")
     try:
         import torch
-        from models.unet import UNet2D
+        from models.unet import UNet2D, UNet3D
         if not torch.cuda.is_available():
             print(f"  {WARN} Skipping — no CUDA")
             return
+
         model = UNet2D(in_ch=1, out_ch=1, base_ch=16).cuda()
         x = torch.randn(2, 1, 256, 256).cuda()
+        with torch.no_grad():
+            model(x)
         t0 = time.time()
         with torch.no_grad():
             y = model(x)
+        torch.cuda.synchronize()
         elapsed = (time.time() - t0) * 1000
         assert y.shape == (2, 1, 256, 256)
         print(f"  {PASS} UNet2D forward pass OK ({elapsed:.0f} ms for batch=2, 256x256)")
+        del model, x, y
+        torch.cuda.empty_cache()
 
-        from models.unet import UNet3D
         model3d = UNet3D(in_ch=1, out_ch=1, base_ch=8).cuda()
         x3 = torch.randn(1, 1, 64, 64, 64).cuda()
+        with torch.no_grad():
+            model3d(x3)
         t0 = time.time()
         with torch.no_grad():
             y3 = model3d(x3)
+        torch.cuda.synchronize()
         elapsed3 = (time.time() - t0) * 1000
         assert y3.shape == (1, 1, 64, 64, 64)
         print(f"  {PASS} UNet3D forward pass OK ({elapsed3:.0f} ms for batch=1, 64³)")
+        del model3d, x3, y3
+        torch.cuda.empty_cache()
+
     except Exception as e:
         print(f"  {FAIL} Forward pass failed: {e}")
 
@@ -208,12 +219,17 @@ def estimate_training_time():
             print(f"  {WARN} Cannot estimate without CUDA")
             return
 
+        torch.cuda.empty_cache()
+        free_vram = torch.cuda.mem_get_info()[0] / 1024**3
+        print(f"  Free VRAM before estimate: {free_vram:.1f} GB")
+
         from models.unet import UNet2D
         model = UNet2D(in_ch=1, out_ch=1, base_ch=64).cuda()
         opt   = torch.optim.Adam(model.parameters(), lr=2e-4)
 
-        x = torch.randn(8, 1, 320, 320).cuda()
-        y = torch.randn(8, 1, 320, 320).cuda()
+        bs = 4
+        x = torch.randn(bs, 1, 320, 320).cuda()
+        y = torch.randn(bs, 1, 320, 320).cuda()
 
         for _ in range(3):
             opt.zero_grad()
@@ -229,27 +245,36 @@ def estimate_training_time():
             torch.cuda.synchronize()
             times.append(time.time() - t0)
 
-        sec_per_batch = sum(times) / len(times)
+        sec_per_sample = sum(times) / len(times) / bs
 
-        slices_2d   = 180 * 150
-        batches_2d  = slices_2d / 8
-        sec_epoch_2d = sec_per_batch * batches_2d
-        print(f"  2D  (~{slices_2d} slices, batch=8): "
-              f"~{sec_epoch_2d/60:.1f} min/epoch  "
-              f"| 1000 epochs ≈ {sec_epoch_2d*1000/3600:.0f} h")
+        n_gpu = torch.cuda.device_count()
+        eff   = 0.7 if n_gpu > 1 else 1.0
+
+        def fmt(sec):
+            h = int(sec) // 3600
+            m = (int(sec) % 3600) // 60
+            return f"{h}h {m}m"
+
+        slices_2d    = 180 * 150
+        t2d          = sec_per_sample * slices_2d / eff
+        print(f"  2D  (~{slices_2d} slices/epoch, 1 GPU): "
+              f"~{t2d/60:.0f} min/epoch | "
+              f"{n_gpu} GPUs ≈ {fmt(t2d/n_gpu/eff)}/epoch")
 
         slices_25d   = 180 * 140
-        batches_25d  = slices_25d / 8
-        sec_epoch_25d = sec_per_batch * batches_25d * 1.15
-        print(f"  2.5D (~{slices_25d} slices, batch=8): "
-              f"~{sec_epoch_25d/60:.1f} min/epoch  "
-              f"| 1000 epochs ≈ {sec_epoch_25d*1000/3600:.0f} h")
+        t25d         = sec_per_sample * slices_25d * 1.15 / eff
+        print(f"  2.5D (~{slices_25d} slices/epoch, 1 GPU): "
+              f"~{t25d/60:.0f} min/epoch | "
+              f"{n_gpu} GPUs ≈ {fmt(t25d/n_gpu/eff)}/epoch")
 
         patches_3d   = 180 * 8
-        sec_epoch_3d = sec_per_batch * (patches_3d / 1) * 4.5
-        print(f"  3D  (~{patches_3d} patches, batch=1): "
-              f"~{sec_epoch_3d/60:.1f} min/epoch  "
-              f"| 1000 epochs ≈ {sec_epoch_3d*1000/3600:.0f} h")
+        t3d          = sec_per_sample * patches_3d * 6 / eff
+        print(f"  3D  (~{patches_3d} patches/epoch, 1 GPU): "
+              f"~{t3d/60:.0f} min/epoch | "
+              f"{n_gpu} GPUs ≈ {fmt(t3d/n_gpu/eff)}/epoch")
+
+        print(f"\n  Measured: {sec_per_sample*1000:.0f} ms/sample "
+              f"(base_ch=64, 320x320, forward+backward)")
 
         n_gpu = torch.cuda.device_count()
         if n_gpu > 1:
