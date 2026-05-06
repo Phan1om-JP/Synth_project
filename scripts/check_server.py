@@ -79,7 +79,7 @@ def check_project_imports():
     modules = [
         "config.config_loader",
         "preprocessing.preprocess",
-        "data.dataset",
+        "dataloader.dataset",
         "models.unet",
         "models.gan",
         "models.losses",

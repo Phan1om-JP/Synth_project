@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_loader import load_config
 from preprocessing.preprocess import load_or_compute_stats, build_cache
-from data.dataset import build_dataloaders
+from dataloader.dataset import build_dataloaders
 from models.gan import build_model
 from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss
 
