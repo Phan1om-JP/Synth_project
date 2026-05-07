@@ -97,7 +97,11 @@ def scan_patients(root, require_ct=True):
         pdir = os.path.join(root, pid)
         if not os.path.isdir(pdir):
             continue
-        files = os.listdir(pdir)
+        try:
+            files = os.listdir(pdir)
+        except OSError as e:
+            print(f"  [WARN] Skipping {pid}: {e}")
+            continue
         if require_ct and "ct.nii.gz" not in files:
             continue
         patients.append({"patient_id": pid, "path": pdir})
