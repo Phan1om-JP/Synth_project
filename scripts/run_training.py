@@ -78,7 +78,8 @@ def train(cfg_path="config/config.yaml"):
     os.makedirs(cfg["paths"]["cache_dir"],      exist_ok=True)
 
     stats = load_or_compute_stats(cfg)
-    build_cache(cfg, stats)
+    if cfg["data"]["spatial_mode"] in ("2D", "2.5D"):
+        build_cache(cfg, stats)
 
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
     generator, discriminator     = build_model(cfg)
