@@ -81,7 +81,7 @@ def train(cfg_path="config/config.yaml", resume_path=None):
     os.makedirs(cfg["paths"]["cache_dir"],      exist_ok=True)
 
     stats = load_or_compute_stats(cfg)
-    if cfg["data"]["spatial_mode"] in ("2D", "2.5D"):
+    if cfg["data"]["spatial_mode"] in ("2D", "2.5D") and not resume_path:
         build_cache(cfg, stats)
 
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
