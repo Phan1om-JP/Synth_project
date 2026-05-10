@@ -4,10 +4,18 @@ import numpy as np
 import nibabel as nib
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data.dataloader import default_collate
 
 from preprocessing.preprocess import (
     pad_to_target, preprocess_mr, preprocess_ct, scan_patients
 )
+
+
+def _safe_collate(batch):
+    batch = [s for s in batch if s is not None]
+    if not batch:
+        return None
+    return default_collate(batch)
 
 
 class SliceDataset2D(Dataset):
@@ -27,14 +35,18 @@ class SliceDataset2D(Dataset):
         return len(self.slices)
 
     def __getitem__(self, idx):
-        packed = np.load(self.slices[idx])
-        mr   = pad_to_target(packed[0], self.target_size, self.target_size)
-        ct   = pad_to_target(packed[1], self.target_size, self.target_size)
-        mask = pad_to_target(packed[2], self.target_size, self.target_size)
-        mr   = torch.from_numpy(mr).unsqueeze(0)
-        ct   = torch.from_numpy(ct).unsqueeze(0)
-        mask = torch.from_numpy(mask).unsqueeze(0)
-        return mr, ct, mask
+        try:
+            packed = np.load(self.slices[idx])
+            mr   = pad_to_target(packed[0], self.target_size, self.target_size)
+            ct   = pad_to_target(packed[1], self.target_size, self.target_size)
+            mask = pad_to_target(packed[2], self.target_size, self.target_size)
+            mr   = torch.from_numpy(mr).unsqueeze(0)
+            ct   = torch.from_numpy(ct).unsqueeze(0)
+            mask = torch.from_numpy(mask).unsqueeze(0)
+            return mr, ct, mask
+        except (OSError, FileNotFoundError) as e:
+            print(f"  [WARN] Skipping {self.slices[idx]}: {e}")
+            return None
 
 
 class SliceDataset25D(Dataset):
@@ -65,24 +77,28 @@ class SliceDataset25D(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        p_dir, center_idx, slice_indices = self.samples[idx]
-        half = self.half
+        try:
+            p_dir, center_idx, slice_indices = self.samples[idx]
+            half = self.half
 
-        mr_slices = []
-        for offset in range(-half, half + 1):
-            fname  = f"{center_idx + offset:04d}.npy"
-            packed = np.load(os.path.join(p_dir, fname))
-            mr_sl  = pad_to_target(packed[0], self.target_size, self.target_size)
-            mr_slices.append(mr_sl)
+            mr_slices = []
+            for offset in range(-half, half + 1):
+                fname  = f"{center_idx + offset:04d}.npy"
+                packed = np.load(os.path.join(p_dir, fname))
+                mr_sl  = pad_to_target(packed[0], self.target_size, self.target_size)
+                mr_slices.append(mr_sl)
 
-        center_packed = np.load(os.path.join(p_dir, f"{center_idx:04d}.npy"))
-        ct   = pad_to_target(center_packed[1], self.target_size, self.target_size)
-        mask = pad_to_target(center_packed[2], self.target_size, self.target_size)
+            center_packed = np.load(os.path.join(p_dir, f"{center_idx:04d}.npy"))
+            ct   = pad_to_target(center_packed[1], self.target_size, self.target_size)
+            mask = pad_to_target(center_packed[2], self.target_size, self.target_size)
 
-        mr_tensor   = torch.from_numpy(np.stack(mr_slices, axis=0)).float()
-        ct_tensor   = torch.from_numpy(ct).unsqueeze(0).float()
-        mask_tensor = torch.from_numpy(mask).unsqueeze(0).float()
-        return mr_tensor, ct_tensor, mask_tensor
+            mr_tensor   = torch.from_numpy(np.stack(mr_slices, axis=0)).float()
+            ct_tensor   = torch.from_numpy(ct).unsqueeze(0).float()
+            mask_tensor = torch.from_numpy(mask).unsqueeze(0).float()
+            return mr_tensor, ct_tensor, mask_tensor
+        except (OSError, FileNotFoundError) as e:
+            print(f"  [WARN] Skipping 2.5D sample {idx} (patient {self.samples[idx][0]}): {e}")
+            return None
 
 
 class PatchDataset3D(Dataset):
@@ -142,16 +158,20 @@ class PatchDataset3D(Dataset):
         return np.pad(arr, pad, mode="constant", constant_values=0)
 
     def __getitem__(self, idx):
-        patient          = self.samples[idx]
-        mr, ct, mask     = self._load_volume(patient)
-        mr_p, ct_p, m_p = self._random_patch(mr, ct, mask)
-        mr_p  = self._pad_patch(mr_p)
-        ct_p  = self._pad_patch(ct_p)
-        m_p   = self._pad_patch(m_p)
-        mr_t  = torch.from_numpy(mr_p).unsqueeze(0).float()
-        ct_t  = torch.from_numpy(ct_p).unsqueeze(0).float()
-        mask_t = torch.from_numpy(m_p).unsqueeze(0).float()
-        return mr_t, ct_t, mask_t
+        try:
+            patient          = self.samples[idx]
+            mr, ct, mask     = self._load_volume(patient)
+            mr_p, ct_p, m_p = self._random_patch(mr, ct, mask)
+            mr_p  = self._pad_patch(mr_p)
+            ct_p  = self._pad_patch(ct_p)
+            m_p   = self._pad_patch(m_p)
+            mr_t  = torch.from_numpy(mr_p).unsqueeze(0).float()
+            ct_t  = torch.from_numpy(ct_p).unsqueeze(0).float()
+            mask_t = torch.from_numpy(m_p).unsqueeze(0).float()
+            return mr_t, ct_t, mask_t
+        except (OSError, FileNotFoundError) as e:
+            print(f"  [WARN] Skipping 3D patient {self.samples[idx]['patient_id']}: {e}")
+            return None
 
 
 def build_dataloaders(cfg, stats):
@@ -192,9 +212,11 @@ def build_dataloaders(cfg, stats):
         raise ValueError(f"Unknown spatial_mode: {mode}")
 
     tr_loader   = DataLoader(tr_ds,   batch_size=bs, shuffle=True,
-                             num_workers=nw, pin_memory=pin)
+                             num_workers=nw, pin_memory=pin,
+                             collate_fn=_safe_collate)
     hold_loader = DataLoader(hold_ds, batch_size=bs, shuffle=False,
-                             num_workers=nw, pin_memory=pin)
+                             num_workers=nw, pin_memory=pin,
+                             collate_fn=_safe_collate)
 
     print(f"Train: {len(tr_loader)} batches | Val: {len(hold_loader)} batches")
     return tr_loader, hold_loader, tr_patients, hold_patients

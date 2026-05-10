@@ -38,7 +38,10 @@ def run_validation(model, loader, stats, device):
     mae_list, ssim_list, psnr_list = [], [], []
 
     with torch.no_grad():
-        for mr, ct, mask in tqdm(loader, desc="Val", leave=False):
+        for batch in tqdm(loader, desc="Val", leave=False):
+            if batch is None:
+                continue
+            mr, ct, mask = batch
             mr, ct, mask = mr.to(device), ct.to(device), mask.to(device)
             pred = model(mr)
 
@@ -70,7 +73,7 @@ def run_validation(model, loader, stats, device):
     }
 
 
-def train(cfg_path="config/config.yaml"):
+def train(cfg_path="config/config.yaml", resume_path=None):
     cfg = load_config(cfg_path)
     set_seed(cfg["project"]["seed"])
 
@@ -102,19 +105,39 @@ def train(cfg_path="config/config.yaml"):
     history          = {"train_loss": [], "val_mae": [], "val_ssim": [], "val_psnr": []}
     best_val_mae     = float("inf")
     patience_counter = 0
+    start_epoch      = 1
     best_ckpt_path   = os.path.join(ckpt_dir, "best_model.pt")
+
+    if resume_path and os.path.isfile(resume_path):
+        print(f"Resuming from {resume_path}")
+        ckpt = torch.load(resume_path, map_location=device)
+        model_target = generator.module if hasattr(generator, "module") else generator
+        model_target.load_state_dict(ckpt["model_state"])
+        opt_G.load_state_dict(ckpt["opt_state"])
+        start_epoch      = ckpt["epoch"] + 1
+        history          = ckpt.get("history", history)
+        best_val_mae     = ckpt.get("best_val_mae", float("inf"))
+        patience_counter = ckpt.get("patience_counter", 0)
+        print(f"  Resumed at epoch {start_epoch} | best MAE so far: {best_val_mae:.4f}")
+    elif resume_path:
+        print(f"  [WARN] Resume checkpoint not found: {resume_path} — starting fresh")
 
     epoch_times = deque(maxlen=5)
     train_start = time.time()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         epoch_start = time.time()
         generator.train()
         epoch_loss = 0.0
 
-        for mr, ct, mask in tqdm(tr_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
+        n_batches = 0
+        for batch in tqdm(tr_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
+            if batch is None:
+                continue
+            mr, ct, mask = batch
             mr, ct, mask = mr.to(device), ct.to(device), mask.to(device)
             pred = generator(mr)
+            n_batches += 1
 
             if loss_type == "l1":
                 loss = masked_l1(pred, ct, mask)
@@ -146,7 +169,7 @@ def train(cfg_path="config/config.yaml"):
         remaining_epochs = epochs - epoch
         eta = avg_epoch_time * remaining_epochs
 
-        avg_loss = epoch_loss / len(tr_loader)
+        avg_loss = epoch_loss / max(n_batches, 1)
         history["train_loss"].append(avg_loss)
 
         if epoch % val_every == 0 or epoch == 1:
@@ -172,12 +195,13 @@ def train(cfg_path="config/config.yaml"):
                                if hasattr(generator, "module")
                                else generator.state_dict())
                 torch.save({
-                    "epoch"       : epoch,
-                    "model_state" : model_state,
-                    "opt_state"   : opt_G.state_dict(),
-                    "history"     : history,
-                    "best_val_mae": best_val_mae,
-                    "cfg"         : cfg,
+                    "epoch"           : epoch,
+                    "model_state"     : model_state,
+                    "opt_state"       : opt_G.state_dict(),
+                    "history"         : history,
+                    "best_val_mae"    : best_val_mae,
+                    "patience_counter": patience_counter,
+                    "cfg"             : cfg,
                 }, best_ckpt_path)
                 print(f"  Best saved (MAE={best_val_mae:.4f})")
             else:
@@ -212,5 +236,10 @@ def train(cfg_path="config/config.yaml"):
 
 
 if __name__ == "__main__":
-    cfg_path = sys.argv[1] if len(sys.argv) > 1 else "config/config.yaml"
-    train(cfg_path)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("cfg",    nargs="?", default="config/config.yaml")
+    parser.add_argument("--resume", default=None,
+                        help="Path to checkpoint to resume from")
+    args = parser.parse_args()
+    train(args.cfg, resume_path=args.resume)
