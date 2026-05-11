@@ -135,8 +135,16 @@ class PatchDataset3D(Dataset):
             for _ in range(patches_per_patient):
                 self.samples.append(p)
 
+        # Preload all volumes into RAM to avoid repeated NFS reads during training
+        print(f"3D Dataset: preloading {len(patient_list)} volumes into RAM...")
+        self._vol_cache = {}
+        for p in patient_list:
+            try:
+                self._vol_cache[p["patient_id"]] = self._load_volume(p)
+            except (OSError, FileNotFoundError) as e:
+                print(f"  [WARN] Skipping {p['patient_id']} at preload: {e}")
         print(f"3D Dataset (patch={patch_size}³): {len(self.samples)} patches "
-              f"from {len(patient_list)} patients.")
+              f"from {len(self._vol_cache)} patients loaded.")
 
     def __len__(self):
         return len(self.samples)
@@ -182,8 +190,11 @@ class PatchDataset3D(Dataset):
 
     def __getitem__(self, idx):
         try:
-            patient            = self.samples[idx]
-            inp, ct, mask      = self._load_volume(patient)
+            patient = self.samples[idx]
+            cached  = self._vol_cache.get(patient["patient_id"])
+            if cached is None:
+                return None
+            inp, ct, mask = cached
             inp_p, ct_p, m_p   = self._random_patch(inp, ct, mask)
             if self.augment:
                 inp_p, ct_p, m_p = apply_augmentation(inp_p, ct_p, m_p, self.cfg, is_3d=True)
