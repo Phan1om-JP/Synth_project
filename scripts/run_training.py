@@ -13,7 +13,10 @@ from skimage.metrics import peak_signal_noise_ratio as psnr_fn
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_loader import load_config
-from preprocessing.preprocess import load_or_compute_stats, build_cache
+from preprocessing.preprocess import (
+    load_or_compute_stats, build_cache,
+    load_or_compute_stats_task2, build_cache_task2,
+)
 from dataloader.dataset import build_dataloaders
 from models.gan import build_model
 from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss
@@ -33,7 +36,7 @@ def _fmt_seconds(s):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def run_validation(model, loader, stats, device):
+def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50):
     model.eval()
     mae_list, ssim_list, psnr_list = [], [], []
 
@@ -41,9 +44,12 @@ def run_validation(model, loader, stats, device):
         for batch in tqdm(loader, desc="Val", leave=False):
             if batch is None:
                 continue
-            mr, ct, mask = batch
-            mr, ct, mask = mr.to(device), ct.to(device), mask.to(device)
-            pred = model(mr)
+            inp, ct, mask = batch
+            inp, ct, mask = inp.to(device), ct.to(device), mask.to(device)
+            if diffusion is not None:
+                pred = diffusion.ddim_sample(model, inp, n_steps=n_ddim_steps)
+            else:
+                pred = model(inp)
 
             ct_std  = stats["ct_global_std"]
             ct_mean = stats["ct_global_mean"]
@@ -80,14 +86,19 @@ def train(cfg_path="config/config.yaml", resume_path=None):
     os.makedirs(cfg["paths"]["checkpoint_dir"], exist_ok=True)
     os.makedirs(cfg["paths"]["cache_dir"],      exist_ok=True)
 
-    stats = load_or_compute_stats(cfg)
+    task  = cfg.get("task", "task1")
+    stats = load_or_compute_stats_task2(cfg) if task == "task2" else load_or_compute_stats(cfg)
     if cfg["data"]["spatial_mode"] in ("2D", "2.5D") and not resume_path:
-        build_cache(cfg, stats)
+        if task == "task2":
+            build_cache_task2(cfg, stats)
+        else:
+            build_cache(cfg, stats)
 
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
     generator, discriminator     = build_model(cfg)
 
     device     = cfg["device"]
+    arch       = cfg["model"].get("architecture", "unet")
     loss_type  = cfg["training"]["loss_type"]
     lr         = cfg["training"]["lr"]
     epochs     = cfg["training"]["epochs"]
@@ -97,9 +108,12 @@ def train(cfg_path="config/config.yaml", resume_path=None):
     gan_lambda = cfg["training"]["gan_lambda"]
     ckpt_dir   = cfg["paths"]["checkpoint_dir"]
 
+    # discriminator holds the GaussianDiffusion object when arch == "diffusion"
+    diffusion = discriminator if arch == "diffusion" else None
+
     opt_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.5, 0.999))
     opt_D = None
-    if loss_type == "l1_gan" and discriminator is not None:
+    if loss_type == "l1_gan" and discriminator is not None and arch != "diffusion":
         opt_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.5, 0.999))
 
     history          = {"train_loss": [], "val_mae": [], "val_ssim": [], "val_psnr": []}
@@ -134,28 +148,36 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         for batch in tqdm(tr_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
             if batch is None:
                 continue
-            mr, ct, mask = batch
-            mr, ct, mask = mr.to(device), ct.to(device), mask.to(device)
-            pred = generator(mr)
+            inp, ct, mask = batch
+            inp, ct, mask = inp.to(device), ct.to(device), mask.to(device)
             n_batches += 1
 
-            if loss_type == "l1":
+            if arch == "diffusion":
+                t    = torch.randint(0, diffusion.T, (inp.size(0),), device=device)
+                loss = diffusion.p_losses(generator, ct, inp, t)
+                opt_G.zero_grad()
+                loss.backward()
+                opt_G.step()
+
+            elif loss_type == "l1":
+                pred = generator(inp)
                 loss = masked_l1(pred, ct, mask)
                 opt_G.zero_grad()
                 loss.backward()
                 opt_G.step()
 
             elif loss_type == "l1_gan":
+                pred       = generator(inp)
                 loss_l1    = masked_l1(pred, ct, mask)
-                disc_fake  = discriminator(mr, pred)
+                disc_fake  = discriminator(inp, pred)
                 loss_g_gan = gan_generator_loss(disc_fake)
                 loss       = loss_l1 + gan_lambda * loss_g_gan
                 opt_G.zero_grad()
                 loss.backward()
                 opt_G.step()
 
-                disc_real = discriminator(mr, ct)
-                disc_fake = discriminator(mr, pred.detach())
+                disc_real = discriminator(inp, ct)
+                disc_fake = discriminator(inp, pred.detach())
                 loss_d    = gan_discriminator_loss(disc_real, disc_fake)
                 opt_D.zero_grad()
                 loss_d.backward()
@@ -172,8 +194,10 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         avg_loss = epoch_loss / max(n_batches, 1)
         history["train_loss"].append(avg_loss)
 
-        if epoch % val_every == 0 or epoch == 1:
-            val_metrics = run_validation(generator, hold_loader, stats, device)
+        ddim_steps = cfg.get("diffusion", {}).get("inference_steps", 50)
+        if epoch % val_every == 0 or epoch == start_epoch:
+            val_metrics = run_validation(generator, hold_loader, stats, device,
+                                         diffusion=diffusion, n_ddim_steps=ddim_steps)
             history["val_mae"].append(val_metrics["mae"])
             history["val_ssim"].append(val_metrics["ssim"])
             history["val_psnr"].append(val_metrics["psnr"])
