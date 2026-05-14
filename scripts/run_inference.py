@@ -57,8 +57,11 @@ def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None
     for z in range(mr_proc.shape[2]):
         sl   = mr_proc[:, :, z]
         h, w = sl.shape
-        sl_p = pad_to_target(sl, target_size, target_size)
-        inp  = torch.from_numpy(sl_p).unsqueeze(0).unsqueeze(0).float().to(device)
+        pt   = (target_size - h) // 2
+        pl   = (target_size - w) // 2
+        inp  = torch.from_numpy(
+            pad_to_target(sl, target_size, target_size)
+        ).unsqueeze(0).unsqueeze(0).float().to(device)
 
         with torch.no_grad():
             if diffusion is not None:
@@ -66,7 +69,7 @@ def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None
             else:
                 out = model(inp).squeeze().cpu().numpy()
 
-        sct_norm[:, :, z] = out[:h, :w]
+        sct_norm[:, :, z] = out[pt:pt+h, pl:pl+w]
 
     return postprocess_ct(sct_norm, stats)
 
@@ -87,12 +90,14 @@ def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device):
             h, w = sl.shape
             slices.append(pad_to_target(sl, target_size, target_size))
 
+        pt  = (target_size - h) // 2
+        pl  = (target_size - w) // 2
         inp = torch.from_numpy(np.stack(slices, axis=0)).unsqueeze(0).float().to(device)
 
         with torch.no_grad():
             out = model(inp).squeeze().cpu().numpy()
 
-        sct_norm[:, :, z] = out[:h, :w]
+        sct_norm[:, :, z] = out[pt:pt+h, pl:pl+w]
 
     return postprocess_ct(sct_norm, stats)
 

@@ -170,8 +170,10 @@ with torch.no_grad():
                 slices.append(pad_to_target(sl, TARGET_SIZE, TARGET_SIZE))
             inp = torch.from_numpy(np.stack(slices, 0)).unsqueeze(0).float().to(DEVICE)
 
+        pt  = (TARGET_SIZE - h) // 2
+        pl  = (TARGET_SIZE - w) // 2
         out = model(inp).squeeze().cpu().numpy()
-        sct_norm[:, :, z] = out[:h, :w]
+        sct_norm[:, :, z] = out[pt:pt+h, pl:pl+w]
 
 sct_hu = postprocess_ct(sct_norm, stats)
 ct_hu  = np.clip(ct_vol, stats["ct_clip_min"], stats["ct_clip_max"])
@@ -180,7 +182,7 @@ print("Inference done.")
 # =============================================================================
 # CELL 6 — Per-slice metrics
 # =============================================================================
-mae_list, ssim_list, psnr_list = [], [], []
+mae_list, ssim_list, psnr_list, z_mae_indices = [], [], [], []
 for z in range(mr_proc.shape[2]):
     m = mask_vol[:, :, z] > 0
     if m.sum() < 100:
@@ -194,6 +196,7 @@ for z in range(mr_proc.shape[2]):
     mae_list.append(mae)
     ssim_list.append(ssim_fn(c_s, p_s, data_range=float(dr)))
     psnr_list.append(psnr_fn(c_s, p_s, data_range=float(dr)))
+    z_mae_indices.append(z)
 
 print(f"MAE  : {np.mean(mae_list):.2f} HU")
 print(f"SSIM : {np.mean(ssim_list):.4f}")
@@ -253,9 +256,8 @@ print("Saved: /content/hu_histogram.png")
 # =============================================================================
 # CELL 9 — Per-slice MAE along z-axis
 # =============================================================================
-z_indices = [mask_slices[i] for i in range(len(mae_list))]
 fig, ax = plt.subplots(figsize=(10, 3))
-ax.plot(z_indices, mae_list, linewidth=1.5, color="steelblue")
+ax.plot(z_mae_indices, mae_list, linewidth=1.5, color="steelblue")
 ax.axhline(np.mean(mae_list), color="tomato", linestyle="--", label=f"Mean = {np.mean(mae_list):.1f} HU")
 ax.set_xlabel("Axial slice index"); ax.set_ylabel("MAE (HU)")
 ax.set_title("Per-slice MAE"); ax.legend()
