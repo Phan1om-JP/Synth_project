@@ -2,34 +2,50 @@ import os
 import numpy as np
 import nibabel as nib
 from skimage.metrics import structural_similarity as ssim_fn
+from skimage.util.arraycrop import crop as arraycrop
+
+# Official SynthRAD2023 evaluation constants (from official-metrics/functions/image_metrics.py)
+HU_MIN        = -1024.0
+HU_MAX        =  3000.0
+DYNAMIC_RANGE = HU_MAX - HU_MIN   # 4024 HU
 
 
 def compute_image_metrics(ct_path, sct_path, mask_path):
+    """
+    Compute image quality metrics matching the official SynthRAD2023 evaluation.
+
+    Differences from naive implementations:
+    - PSNR uses a fixed population dynamic range (4024 HU) not per-patient range
+    - SSIM is computed on the full 3D volume with official masking (set outside-mask
+      to HU_MIN, shift to non-negative, then apply mask to SSIM map)
+    """
     ct_arr   = nib.load(ct_path).get_fdata(dtype=np.float32)
     sct_arr  = nib.load(sct_path).get_fdata(dtype=np.float32)
     mask_arr = nib.load(mask_path).get_fdata() > 0
 
-    m    = mask_arr
-    mae  = float(np.abs(ct_arr[m] - sct_arr[m]).mean())
-    rmse = float(np.sqrt(((ct_arr[m] - sct_arr[m])**2).mean()))
-    data_range = float(ct_arr[m].max() - ct_arr[m].min())
-    psnr = float(20 * np.log10(data_range / (rmse + 1e-8)))
+    m = mask_arr
 
-    ssim_scores = []
-    for z in range(ct_arr.shape[2]):
-        sl_ct  = ct_arr[:, :, z]
-        sl_sct = sct_arr[:, :, z]
-        if mask_arr[:, :, z].sum() > 100:
-            dr = sl_ct.max() - sl_ct.min()
-            if dr > 0:
-                ssim_scores.append(ssim_fn(sl_ct, sl_sct, data_range=float(dr)))
+    # --- MAE: inside mask only ---
+    mae = float(np.abs(ct_arr[m] - sct_arr[m]).mean())
 
-    return {
-        "mae"  : mae,
-        "rmse" : rmse,
-        "psnr" : psnr,
-        "ssim" : float(np.mean(ssim_scores)) if ssim_scores else 0.0,
-    }
+    # --- PSNR: clip to official range, population dynamic range ---
+    ct_c  = np.clip(ct_arr,  HU_MIN, HU_MAX)
+    sct_c = np.clip(sct_arr, HU_MIN, HU_MAX)
+    rmse  = float(np.sqrt(((ct_c[m] - sct_c[m]) ** 2).mean()))
+    psnr  = float(20.0 * np.log10(DYNAMIC_RANGE / (rmse + 1e-8)))
+
+    # --- SSIM: 3D volume, official masking + shift to non-negative ---
+    # Set voxels outside mask to HU_MIN, then shift entire volume to [0, 4024]
+    gt_s  = (np.where(m, ct_c,  HU_MIN) - HU_MIN).astype(np.float64)
+    sct_s = (np.where(m, sct_c, HU_MIN) - HU_MIN).astype(np.float64)
+    _, ssim_map = ssim_fn(gt_s, sct_s,
+                          data_range=float(DYNAMIC_RANGE),
+                          full=True)
+    pad          = 3
+    mask_cropped = arraycrop(m.astype(float), pad).astype(bool)
+    ssim         = float(arraycrop(ssim_map, pad)[mask_cropped].mean())
+
+    return {"mae": mae, "rmse": rmse, "psnr": psnr, "ssim": ssim}
 
 
 def gamma_index_3d(ref, evl, spacing_mm, dd=0.02, dta_mm=2.0, thr=0.1):

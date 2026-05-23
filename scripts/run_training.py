@@ -1,5 +1,6 @@
 import os
 import sys
+import csv
 import time
 import random
 from collections import deque
@@ -20,6 +21,11 @@ from preprocessing.preprocess import (
 from dataloader.dataset import build_dataloaders
 from models.gan import build_model
 from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss
+
+# Official SynthRAD2023 evaluation range (matches official-metrics repo)
+_HU_MIN = -1024.0
+_HU_MAX =  3000.0
+_DR     = _HU_MAX - _HU_MIN   # 4024 HU — fixed population dynamic range
 
 
 def set_seed(seed):
@@ -53,24 +59,23 @@ def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50
 
             ct_std  = stats["ct_global_std"]
             ct_mean = stats["ct_global_mean"]
-            ct_min  = stats["ct_clip_min"]
-            ct_max  = stats["ct_clip_max"]
 
-            pred_np = np.clip(pred.cpu().numpy()[:, 0] * ct_std + ct_mean, ct_min, ct_max)
-            ct_np   = np.clip(ct.cpu().numpy()[:, 0]   * ct_std + ct_mean, ct_min, ct_max)
+            # Clip to official evaluation range for comparable metrics
+            pred_np = np.clip(pred.cpu().numpy()[:, 0] * ct_std + ct_mean, _HU_MIN, _HU_MAX)
+            ct_np   = np.clip(ct.cpu().numpy()[:, 0]   * ct_std + ct_mean, _HU_MIN, _HU_MAX)
             mask_np = mask.cpu().numpy()[:, 0]
 
             for b in range(pred_np.shape[0]):
                 m = mask_np[b] > 0
                 if m.sum() == 0:
                     continue
-                mae        = np.abs(pred_np[b][m] - ct_np[b][m]).mean()
-                data_range = ct_np[b][m].max() - ct_np[b][m].min()
-                p_sl       = pred_np[b].copy(); p_sl[~m] = 0
-                c_sl       = ct_np[b].copy();   c_sl[~m] = 0
+                mae  = np.abs(pred_np[b][m] - ct_np[b][m]).mean()
+                # Set outside-mask to HU_MIN (matches official masking approach)
+                p_sl = pred_np[b].copy(); p_sl[~m] = _HU_MIN
+                c_sl = ct_np[b].copy();   c_sl[~m] = _HU_MIN
                 mae_list.append(mae)
-                ssim_list.append(ssim_fn(c_sl, p_sl, data_range=float(data_range)))
-                psnr_list.append(psnr_fn(c_sl, p_sl, data_range=float(data_range)))
+                ssim_list.append(ssim_fn(c_sl, p_sl, data_range=_DR))
+                psnr_list.append(psnr_fn(c_sl, p_sl, data_range=_DR))
 
     return {
         "mae" : float(np.mean(mae_list))  if mae_list  else 0.0,
@@ -111,7 +116,18 @@ def train(cfg_path="config/config.yaml", resume_path=None):
     # discriminator holds the GaussianDiffusion object when arch == "diffusion"
     diffusion = discriminator if arch == "diffusion" else None
 
-    opt_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.5, 0.999))
+    # --- Build optimizer (hybrid loss has learnable weight parameters) ---
+    hybrid_loss_fn = None
+    if loss_type == "hybrid":
+        from models.losses import HybridLoss
+        hybrid_loss_fn = HybridLoss().to(device)
+        opt_G = torch.optim.Adam(
+            list(generator.parameters()) + list(hybrid_loss_fn.parameters()),
+            lr=lr, betas=(0.5, 0.999),
+        )
+    else:
+        opt_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.5, 0.999))
+
     opt_D = None
     if loss_type == "l1_gan" and discriminator is not None and arch != "diffusion":
         opt_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.5, 0.999))
@@ -132,9 +148,18 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         history          = ckpt.get("history", history)
         best_val_mae     = ckpt.get("best_val_mae", float("inf"))
         patience_counter = ckpt.get("patience_counter", 0)
+        if hybrid_loss_fn is not None and "loss_fn_state" in ckpt:
+            hybrid_loss_fn.load_state_dict(ckpt["loss_fn_state"])
         print(f"  Resumed at epoch {start_epoch} | best MAE so far: {best_val_mae:.4f}")
     elif resume_path:
         print(f"  [WARN] Resume checkpoint not found: {resume_path} — starting fresh")
+
+    # --- CSV metrics logger ---
+    log_path = os.path.join(ckpt_dir, "metrics_log.csv")
+    if not os.path.isfile(log_path):
+        with open(log_path, "w", newline="") as f:
+            csv.writer(f).writerow(["epoch", "train_loss",
+                                    "val_mae", "val_ssim", "val_psnr"])
 
     epoch_times = deque(maxlen=5)
     train_start = time.time()
@@ -143,8 +168,8 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         epoch_start = time.time()
         generator.train()
         epoch_loss = 0.0
+        n_batches  = 0
 
-        n_batches = 0
         for batch in tqdm(tr_loader, desc=f"Epoch {epoch}/{epochs}", leave=False):
             if batch is None:
                 continue
@@ -162,6 +187,13 @@ def train(cfg_path="config/config.yaml", resume_path=None):
             elif loss_type == "l1":
                 pred = generator(inp)
                 loss = masked_l1(pred, ct, mask)
+                opt_G.zero_grad()
+                loss.backward()
+                opt_G.step()
+
+            elif loss_type == "hybrid":
+                pred = generator(inp)
+                loss, _ = hybrid_loss_fn(pred, ct, mask)
                 opt_G.zero_grad()
                 loss.backward()
                 opt_G.step()
@@ -194,6 +226,9 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         avg_loss = epoch_loss / max(n_batches, 1)
         history["train_loss"].append(avg_loss)
 
+        # Track whether this epoch produced an improvement (for patience)
+        improved = False
+
         ddim_steps = cfg.get("diffusion", {}).get("inference_steps", 50)
         if epoch % val_every == 0 or epoch == start_epoch:
             val_metrics = run_validation(generator, hold_loader, stats, device,
@@ -211,48 +246,79 @@ def train(cfg_path="config/config.yaml", resume_path=None):
                 f"epoch {epoch_elapsed:.0f}s | "
                 f"ETA {_fmt_seconds(eta)}"
             )
+            if loss_type == "hybrid" and hybrid_loss_fn is not None:
+                lv = hybrid_loss_fn.log_vars.detach().cpu()
+                w  = torch.exp(-lv.clamp(-4, 4))
+                print(f"  Adaptive weights — "
+                      f"L1:{w[0]:.3f}  SSIM:{w[1]:.3f}  "
+                      f"grad:{w[2]:.3f}  freq:{w[3]:.3f}")
+
+            # Log to CSV (val epoch row)
+            with open(log_path, "a", newline="") as f:
+                csv.writer(f).writerow([
+                    epoch, f"{avg_loss:.6f}",
+                    f"{val_metrics['mae']:.4f}",
+                    f"{val_metrics['ssim']:.4f}",
+                    f"{val_metrics['psnr']:.4f}",
+                ])
 
             if val_metrics["mae"] < best_val_mae:
                 best_val_mae     = val_metrics["mae"]
                 patience_counter = 0
+                improved         = True
                 model_state = (generator.module.state_dict()
                                if hasattr(generator, "module")
                                else generator.state_dict())
-                torch.save({
+                ckpt_data = {
                     "epoch"           : epoch,
                     "model_state"     : model_state,
                     "opt_state"       : opt_G.state_dict(),
                     "history"         : history,
                     "best_val_mae"    : best_val_mae,
-                    "patience_counter": patience_counter,
+                    "patience_counter": 0,
                     "cfg"             : cfg,
-                }, best_ckpt_path)
+                }
+                if hybrid_loss_fn is not None:
+                    ckpt_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
+                torch.save(ckpt_data, best_ckpt_path)
                 print(f"  Best saved (MAE={best_val_mae:.4f})")
             else:
-                patience_counter += 1
-                print(f"  No improvement. Patience: {patience_counter}/{patience}")
-                if patience_counter >= patience:
-                    print(f"Early stopping at epoch {epoch}.")
-                    break
+                print(f"  No improvement. Patience: {patience_counter + 1}/{patience}")
+
         else:
+            # Log to CSV (train-only row, no val metrics)
+            with open(log_path, "a", newline="") as f:
+                csv.writer(f).writerow([epoch, f"{avg_loss:.6f}", "", "", ""])
+
             print(
                 f"Epoch {epoch:04d}/{epochs} | "
                 f"loss {avg_loss:.4f} | "
+                f"patience {patience_counter}/{patience} | "
                 f"epoch {epoch_elapsed:.0f}s | "
                 f"ETA {_fmt_seconds(eta)}"
             )
+
+        # Patience is tracked per epoch (not per val event)
+        if not improved:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping at epoch {epoch}.")
+                break
 
         if epoch % save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch:04d}.pt")
             model_state = (generator.module.state_dict()
                            if hasattr(generator, "module")
                            else generator.state_dict())
-            torch.save({
+            ckpt_data = {
                 "epoch"      : epoch,
                 "model_state": model_state,
                 "opt_state"  : opt_G.state_dict(),
                 "history"    : history,
-            }, ckpt_path)
+            }
+            if hybrid_loss_fn is not None:
+                ckpt_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
+            torch.save(ckpt_data, ckpt_path)
             print(f"  Checkpoint saved: {ckpt_path}")
 
     total_time = time.time() - train_start
