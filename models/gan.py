@@ -34,7 +34,25 @@ def build_model(cfg):
     base_ch   = cfg["model"]["base_ch"]
     device    = cfg["device"]
     multi_gpu = cfg["training"]["multi_gpu"]
+    arch      = cfg["model"].get("architecture", "unet")
 
+    if arch == "diffusion":
+        from models.diffusion import DiffusionUNet, GaussianDiffusion
+        # in_ch=2: noisy CT + condition (MR or CBCT) concatenated
+        generator = DiffusionUNet(in_ch=2, base_ch=base_ch)
+        if multi_gpu and torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs via DataParallel.")
+            generator = nn.DataParallel(generator)
+        generator = generator.to(device)
+        n_params  = sum(p.numel() for p in generator.parameters() if p.requires_grad)
+        print(f"DiffusionUNet params: {n_params:,}")
+        diffusion = GaussianDiffusion(
+            timesteps=cfg["diffusion"]["timesteps"],
+            beta_schedule=cfg["diffusion"]["beta_schedule"],
+        )
+        return generator, diffusion
+
+    # --- UNet path ---
     if mode in ("2D", "2.5D"):
         n_in      = cfg["data"]["n_adjacent"] if mode == "2.5D" else in_ch
         generator = UNet2D(n_in, out_ch, base_ch)

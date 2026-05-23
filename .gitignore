@@ -210,6 +210,9 @@ backups/
 *.backup
 *.old
 
+config/private.yaml
+CLAUDE.md
+
 # =========================
 # Optional: Keep Empty Folder Structure
 # =========================
