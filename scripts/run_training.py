@@ -143,7 +143,10 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         ckpt = torch.load(resume_path, map_location=device)
         model_target = generator.module if hasattr(generator, "module") else generator
         model_target.load_state_dict(ckpt["model_state"])
-        opt_G.load_state_dict(ckpt["opt_state"])
+        try:
+            opt_G.load_state_dict(ckpt["opt_state"])
+        except ValueError:
+            print("  [WARN] Optimizer state skipped (loss type changed) — using fresh optimizer")
         start_epoch      = ckpt["epoch"] + 1
         history          = ckpt.get("history", history)
         best_val_mae     = ckpt.get("best_val_mae", float("inf"))
