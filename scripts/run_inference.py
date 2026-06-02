@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config_loader import load_config
 from preprocessing.preprocess import (
-    load_or_compute_stats, scan_patients,
-    preprocess_mr, postprocess_ct, pad_to_target
+    load_or_compute_stats, load_or_compute_stats_task2, scan_patients,
+    preprocess_mr, preprocess_cbct, postprocess_ct, pad_to_target
 )
 from models.unet import UNet2D, UNet3D
 
@@ -48,10 +48,12 @@ def load_generator(ckpt_path, cfg):
     return model, diffusion
 
 
-def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None):
+def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None,
+                     preprocess_fn=None):
     target_size = cfg["preprocessing"]["target_size"]
     n_ddim      = cfg.get("diffusion", {}).get("inference_steps", 50)
-    mr_proc     = preprocess_mr(mr_vol, mask=mask_vol)
+    preprocess_fn = preprocess_fn or (lambda v, m: preprocess_mr(v, mask=m))
+    mr_proc     = preprocess_fn(mr_vol, mask_vol)
     sct_norm    = np.zeros_like(mr_proc)
 
     for z in range(mr_proc.shape[2]):
@@ -74,11 +76,12 @@ def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None
     return postprocess_ct(sct_norm, stats)
 
 
-def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device):
+def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None):
     target_size = cfg["preprocessing"]["target_size"]
     n_adjacent  = cfg["data"]["n_adjacent"]
     half        = n_adjacent // 2
-    mr_proc     = preprocess_mr(mr_vol, mask=mask_vol)
+    preprocess_fn = preprocess_fn or (lambda v, m: preprocess_mr(v, mask=m))
+    mr_proc     = preprocess_fn(mr_vol, mask_vol)
     sct_norm    = np.zeros_like(mr_proc)
     n_z         = mr_proc.shape[2]
 
@@ -102,8 +105,9 @@ def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device):
     return postprocess_ct(sct_norm, stats)
 
 
-def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device):
-    mr_proc  = preprocess_mr(mr_vol, mask=mask_vol)
+def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None):
+    preprocess_fn = preprocess_fn or (lambda v, m: preprocess_mr(v, mask=m))
+    mr_proc  = preprocess_fn(mr_vol, mask_vol)
     orig_shape = mr_proc.shape
 
     def pad_to_mult(arr, mult=8):
@@ -121,9 +125,13 @@ def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device):
 
 
 def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
-    cfg   = load_config(cfg_path)
-    stats = load_or_compute_stats(cfg)
+    cfg    = load_config(cfg_path)
+    task   = cfg.get("task", "task1")
+    stats  = load_or_compute_stats_task2(cfg) if task == "task2" \
+             else load_or_compute_stats(cfg)
     device = cfg["device"]
+    preprocess_fn = (lambda v, m: preprocess_cbct(v, stats)) if task == "task2" \
+                    else (lambda v, m: preprocess_mr(v, mask=m))
 
     if ckpt_path is None:
         ckpt_path = os.path.join(cfg["paths"]["checkpoint_dir"], "best_model.pt")
@@ -133,12 +141,12 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
     arch  = cfg["model"].get("architecture", "unet")
     print(f"Model loaded from: {ckpt_path}  (arch={arch})")
 
-    task       = cfg.get("task", "task1")
     input_file = "cbct.nii.gz" if task == "task2" else "mr.nii.gz"
-    root       = cfg["paths"].get("task2_train" if task == "task2" else "task1_train",
-                                  cfg["paths"]["task1_train"]) if split == "train" \
-                 else cfg["paths"].get("task2_val" if task == "task2" else "task1_val",
-                                       cfg["paths"]["task1_val"])
+    train_key  = "task2_train" if task == "task2" else "task1_train"
+    val_key    = "task2_val"   if task == "task2" else "task1_val"
+    train_root = cfg["paths"][train_key]
+    root       = train_root if split == "train" \
+                 else cfg["paths"].get(val_key, train_root)
     require_ct = split == "train"
     patients   = scan_patients(root, require_ct=require_ct)
     mode       = cfg["data"]["spatial_mode"]
@@ -160,11 +168,13 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
 
         if mode == "2D":
             sct = infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device,
-                                   diffusion=diffusion)
+                                   diffusion=diffusion, preprocess_fn=preprocess_fn)
         elif mode == "2.5D":
-            sct = infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device)
+            sct = infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device,
+                                    preprocess_fn=preprocess_fn)
         elif mode == "3D":
-            sct = infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device)
+            sct = infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device,
+                                   preprocess_fn=preprocess_fn)
         else:
             raise ValueError(f"Unknown spatial_mode: {mode}")
 
