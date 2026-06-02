@@ -143,8 +143,12 @@ class PatchDataset3D(Dataset):
                 self._vol_cache[p["patient_id"]] = self._load_volume(p)
             except (OSError, FileNotFoundError) as e:
                 print(f"  [WARN] Skipping {p['patient_id']} at preload: {e}")
+        n_loaded = len(self._vol_cache)
         print(f"3D Dataset (patch={patch_size}³): {len(self.samples)} patches "
-              f"from {len(self._vol_cache)} patients loaded.")
+              f"from {n_loaded} patients loaded.")
+        if n_loaded == 0:
+            print("  [ERROR] No volumes cached — all patients failed to load. "
+                  "Check NFS connectivity or RAM availability.")
 
     def __len__(self):
         return len(self.samples)

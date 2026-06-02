@@ -77,10 +77,13 @@ def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50
                 ssim_list.append(ssim_fn(c_sl, p_sl, data_range=_DR))
                 psnr_list.append(psnr_fn(c_sl, p_sl, data_range=_DR))
 
+    if not mae_list:
+        print("  [WARN] Validation produced no valid batches — skipping metric update.")
+        return None
     return {
-        "mae" : float(np.mean(mae_list))  if mae_list  else 0.0,
-        "ssim": float(np.mean(ssim_list)) if ssim_list else 0.0,
-        "psnr": float(np.mean(psnr_list)) if psnr_list else 0.0,
+        "mae" : float(np.mean(mae_list)),
+        "ssim": float(np.mean(ssim_list)),
+        "psnr": float(np.mean(psnr_list)),
     }
 
 
@@ -236,57 +239,70 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         if epoch % val_every == 0 or epoch == start_epoch:
             val_metrics = run_validation(generator, hold_loader, stats, device,
                                          diffusion=diffusion, n_ddim_steps=ddim_steps)
-            history["val_mae"].append(val_metrics["mae"])
-            history["val_ssim"].append(val_metrics["ssim"])
-            history["val_psnr"].append(val_metrics["psnr"])
 
-            print(
-                f"Epoch {epoch:04d}/{epochs} | "
-                f"loss {avg_loss:.4f} | "
-                f"MAE {val_metrics['mae']:.4f} | "
-                f"SSIM {val_metrics['ssim']:.4f} | "
-                f"PSNR {val_metrics['psnr']:.2f} | "
-                f"epoch {epoch_elapsed:.0f}s | "
-                f"ETA {_fmt_seconds(eta)}"
-            )
-            if loss_type == "hybrid" and hybrid_loss_fn is not None:
-                lv = hybrid_loss_fn.log_vars.detach().cpu()
-                w  = torch.exp(-lv.clamp(-4, 4))
-                print(f"  Adaptive weights — "
-                      f"L1:{w[0]:.3f}  SSIM:{w[1]:.3f}  "
-                      f"grad:{w[2]:.3f}  freq:{w[3]:.3f}")
-
-            # Log to CSV (val epoch row)
-            with open(log_path, "a", newline="") as f:
-                csv.writer(f).writerow([
-                    epoch, f"{avg_loss:.6f}",
-                    f"{val_metrics['mae']:.4f}",
-                    f"{val_metrics['ssim']:.4f}",
-                    f"{val_metrics['psnr']:.4f}",
-                ])
-
-            if val_metrics["mae"] < best_val_mae:
-                best_val_mae     = val_metrics["mae"]
-                patience_counter = 0
-                improved         = True
-                model_state = (generator.module.state_dict()
-                               if hasattr(generator, "module")
-                               else generator.state_dict())
-                ckpt_data = {
-                    "epoch"           : epoch,
-                    "model_state"     : model_state,
-                    "opt_state"       : opt_G.state_dict(),
-                    "history"         : history,
-                    "best_val_mae"    : best_val_mae,
-                    "patience_counter": 0,
-                    "cfg"             : cfg,
-                }
-                if hybrid_loss_fn is not None:
-                    ckpt_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
-                torch.save(ckpt_data, best_ckpt_path)
-                print(f"  Best saved (MAE={best_val_mae:.4f})")
+            if val_metrics is None:
+                # All val batches were invalid — log train-only row and skip improvement check
+                with open(log_path, "a", newline="") as f:
+                    csv.writer(f).writerow([epoch, f"{avg_loss:.6f}", "", "", ""])
+                print(
+                    f"Epoch {epoch:04d}/{epochs} | "
+                    f"loss {avg_loss:.4f} | "
+                    f"val SKIPPED (no valid batches) | "
+                    f"epoch {epoch_elapsed:.0f}s | "
+                    f"ETA {_fmt_seconds(eta)}"
+                )
             else:
-                print(f"  No improvement. Patience: {patience_counter + 1}/{patience}")
+                history["val_mae"].append(val_metrics["mae"])
+                history["val_ssim"].append(val_metrics["ssim"])
+                history["val_psnr"].append(val_metrics["psnr"])
+
+                print(
+                    f"Epoch {epoch:04d}/{epochs} | "
+                    f"loss {avg_loss:.4f} | "
+                    f"MAE {val_metrics['mae']:.4f} | "
+                    f"SSIM {val_metrics['ssim']:.4f} | "
+                    f"PSNR {val_metrics['psnr']:.2f} | "
+                    f"epoch {epoch_elapsed:.0f}s | "
+                    f"ETA {_fmt_seconds(eta)}"
+                )
+                if loss_type == "hybrid" and hybrid_loss_fn is not None:
+                    lv = hybrid_loss_fn.log_vars.detach().cpu()
+                    w  = torch.exp(-lv.clamp(-4, 4))
+                    print(f"  Adaptive weights — "
+                          f"L1:{w[0]:.3f}  SSIM:{w[1]:.3f}  "
+                          f"grad:{w[2]:.3f}  freq:{w[3]:.3f}")
+
+                # Log to CSV (val epoch row)
+                with open(log_path, "a", newline="") as f:
+                    csv.writer(f).writerow([
+                        epoch, f"{avg_loss:.6f}",
+                        f"{val_metrics['mae']:.4f}",
+                        f"{val_metrics['ssim']:.4f}",
+                        f"{val_metrics['psnr']:.4f}",
+                    ])
+
+                if val_metrics["mae"] < best_val_mae:
+                    best_val_mae     = val_metrics["mae"]
+                    patience_counter = 0
+                    improved         = True
+                    model_state = (generator.module.state_dict()
+                                   if hasattr(generator, "module")
+                                   else generator.state_dict())
+                    ckpt_data = {
+                        "epoch"           : epoch,
+                        "model_state"     : model_state,
+                        "opt_state"       : opt_G.state_dict(),
+                        "history"         : history,
+                        "best_val_mae"    : best_val_mae,
+                        "patience_counter": 0,
+                        "cfg"             : cfg,
+                    }
+                    if hybrid_loss_fn is not None:
+                        ckpt_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
+                    torch.save(ckpt_data, best_ckpt_path)
+                    print(f"  Best saved (MAE={best_val_mae:.4f})")
+                else:
+                    print(f"  No improvement. Patience: {patience_counter + 1}/{patience}")
 
         else:
             # Log to CSV (train-only row, no val metrics)
