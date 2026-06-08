@@ -79,6 +79,21 @@ def frequency_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.l1_loss(torch.log(pred_mag + 1.0), torch.log(targ_mag + 1.0))
 
 
+def residual_skip(pred: torch.Tensor, inp: torch.Tensor, stats: dict) -> torch.Tensor:
+    """Re-express CBCT input in CT z-score space and add to model output.
+
+    The model learns only the correction Δ (CBCT→CT residual). For multi-channel
+    inputs (2.5D), the centre channel is used as the residual carrier.
+
+    Only call this when task == "task2" (stats must contain cbct_global_* keys).
+    """
+    n_ch = inp.shape[1]
+    inp_center = inp[:, n_ch // 2 : n_ch // 2 + 1, ...]
+    cbct_hu = inp_center * stats["cbct_global_std"] + stats["cbct_global_mean"]
+    inp_ct  = (cbct_hu - stats["ct_global_mean"]) / (stats["ct_global_std"] + 1e-8)
+    return pred + inp_ct
+
+
 class HybridLoss(nn.Module):
     """
     Uncertainty-weighted hybrid loss: L1 + SSIM + gradient + frequency.

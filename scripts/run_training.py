@@ -20,7 +20,7 @@ from preprocessing.preprocess import (
 )
 from dataloader.dataset import build_dataloaders
 from models.gan import build_model
-from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss
+from models.losses import masked_l1, gan_generator_loss, gan_discriminator_loss, residual_skip
 
 # Official SynthRAD2023 evaluation range (matches official-metrics repo)
 _HU_MIN = -1024.0
@@ -42,7 +42,8 @@ def _fmt_seconds(s):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50):
+def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50,
+                   use_residual=False):
     model.eval()
     mae_list, ssim_list, psnr_list = [], [], []
 
@@ -56,6 +57,8 @@ def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50
                 pred = diffusion.ddim_sample(model, inp, n_steps=n_ddim_steps)
             else:
                 pred = model(inp)
+            if use_residual:
+                pred = residual_skip(pred, inp, stats)
 
             ct_std  = stats["ct_global_std"]
             ct_mean = stats["ct_global_mean"]
@@ -105,9 +108,10 @@ def train(cfg_path="config/config.yaml", resume_path=None):
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
     generator, discriminator     = build_model(cfg)
 
-    device     = cfg["device"]
-    arch       = cfg["model"].get("architecture", "unet")
-    loss_type  = cfg["training"]["loss_type"]
+    device       = cfg["device"]
+    arch         = cfg["model"].get("architecture", "unet")
+    loss_type    = cfg["training"]["loss_type"]
+    use_residual = cfg["model"].get("residual", False)
     lr         = cfg["training"]["lr"]
     epochs     = cfg["training"]["epochs"]
     val_every  = cfg["training"]["val_every"]
@@ -192,6 +196,8 @@ def train(cfg_path="config/config.yaml", resume_path=None):
 
             elif loss_type == "l1":
                 pred = generator(inp)
+                if use_residual:
+                    pred = residual_skip(pred, inp, stats)
                 loss = masked_l1(pred, ct, mask)
                 opt_G.zero_grad()
                 loss.backward()
@@ -199,13 +205,17 @@ def train(cfg_path="config/config.yaml", resume_path=None):
 
             elif loss_type == "hybrid":
                 pred = generator(inp)
+                if use_residual:
+                    pred = residual_skip(pred, inp, stats)
                 loss, _ = hybrid_loss_fn(pred, ct, mask)
                 opt_G.zero_grad()
                 loss.backward()
                 opt_G.step()
 
             elif loss_type == "l1_gan":
-                pred       = generator(inp)
+                pred = generator(inp)
+                if use_residual:
+                    pred = residual_skip(pred, inp, stats)
                 loss_l1    = masked_l1(pred, ct, mask)
                 disc_fake  = discriminator(inp, pred)
                 loss_g_gan = gan_generator_loss(disc_fake)
@@ -238,7 +248,8 @@ def train(cfg_path="config/config.yaml", resume_path=None):
         ddim_steps = cfg.get("diffusion", {}).get("inference_steps", 50)
         if epoch % val_every == 0 or epoch == start_epoch:
             val_metrics = run_validation(generator, hold_loader, stats, device,
-                                         diffusion=diffusion, n_ddim_steps=ddim_steps)
+                                         diffusion=diffusion, n_ddim_steps=ddim_steps,
+                                         use_residual=use_residual)
 
             if val_metrics is None:
                 # All val batches were invalid — log train-only row and skip improvement check

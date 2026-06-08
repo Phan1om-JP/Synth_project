@@ -14,6 +14,7 @@ from preprocessing.preprocess import (
     preprocess_mr, preprocess_cbct, postprocess_ct, pad_to_target
 )
 from models.unet import UNet2D, UNet3D
+from models.losses import residual_skip
 
 
 def load_generator(ckpt_path, cfg):
@@ -49,7 +50,7 @@ def load_generator(ckpt_path, cfg):
 
 
 def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None,
-                     preprocess_fn=None):
+                     preprocess_fn=None, use_residual=False):
     target_size = cfg["preprocessing"]["target_size"]
     n_ddim      = cfg.get("diffusion", {}).get("inference_steps", 50)
     preprocess_fn = preprocess_fn or (lambda v, m: preprocess_mr(v, mask=m))
@@ -67,16 +68,20 @@ def infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device, diffusion=None
 
         with torch.no_grad():
             if diffusion is not None:
-                out = diffusion.ddim_sample(model, inp, n_steps=n_ddim).squeeze().cpu().numpy()
+                pred = diffusion.ddim_sample(model, inp, n_steps=n_ddim)
             else:
-                out = model(inp).squeeze().cpu().numpy()
+                pred = model(inp)
+            if use_residual:
+                pred = residual_skip(pred, inp, stats)
+            out = pred.squeeze().cpu().numpy()
 
         sct_norm[:, :, z] = out[pt:pt+h, pl:pl+w]
 
     return postprocess_ct(sct_norm, stats)
 
 
-def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None):
+def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None,
+                      use_residual=False):
     target_size = cfg["preprocessing"]["target_size"]
     n_adjacent  = cfg["data"]["n_adjacent"]
     half        = n_adjacent // 2
@@ -98,14 +103,18 @@ def infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn
         inp = torch.from_numpy(np.stack(slices, axis=0)).unsqueeze(0).float().to(device)
 
         with torch.no_grad():
-            out = model(inp).squeeze().cpu().numpy()
+            pred = model(inp)
+            if use_residual:
+                pred = residual_skip(pred, inp, stats)
+            out = pred.squeeze().cpu().numpy()
 
         sct_norm[:, :, z] = out[pt:pt+h, pl:pl+w]
 
     return postprocess_ct(sct_norm, stats)
 
 
-def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None):
+def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=None,
+                     use_residual=False):
     preprocess_fn = preprocess_fn or (lambda v, m: preprocess_mr(v, mask=m))
     mr_proc  = preprocess_fn(mr_vol, mask_vol)
     orig_shape = mr_proc.shape
@@ -118,7 +127,10 @@ def infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device, preprocess_fn=
     inp = torch.from_numpy(mr_pad).unsqueeze(0).unsqueeze(0).float().to(device)
 
     with torch.no_grad():
-        out = model(inp).squeeze().cpu().numpy()
+        pred = model(inp)
+        if use_residual:
+            pred = residual_skip(pred, inp, stats)
+        out = pred.squeeze().cpu().numpy()
 
     out_crop = out[:orig_shape[0], :orig_shape[1], :orig_shape[2]]
     return postprocess_ct(out_crop, stats)
@@ -132,6 +144,7 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
     device = cfg["device"]
     preprocess_fn = (lambda v, m: preprocess_cbct(v, stats)) if task == "task2" \
                     else (lambda v, m: preprocess_mr(v, mask=m))
+    use_residual  = cfg["model"].get("residual", False)
 
     if ckpt_path is None:
         ckpt_path = os.path.join(cfg["paths"]["checkpoint_dir"], "best_model.pt")
@@ -168,13 +181,16 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
 
         if mode == "2D":
             sct = infer_patient_2d(model, mr_vol, mask_vol, stats, cfg, device,
-                                   diffusion=diffusion, preprocess_fn=preprocess_fn)
+                                   diffusion=diffusion, preprocess_fn=preprocess_fn,
+                                   use_residual=use_residual)
         elif mode == "2.5D":
             sct = infer_patient_25d(model, mr_vol, mask_vol, stats, cfg, device,
-                                    preprocess_fn=preprocess_fn)
+                                    preprocess_fn=preprocess_fn,
+                                    use_residual=use_residual)
         elif mode == "3D":
             sct = infer_patient_3d(model, mr_vol, mask_vol, stats, cfg, device,
-                                   preprocess_fn=preprocess_fn)
+                                   preprocess_fn=preprocess_fn,
+                                   use_residual=use_residual)
         else:
             raise ValueError(f"Unknown spatial_mode: {mode}")
 
