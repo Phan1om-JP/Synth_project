@@ -210,7 +210,7 @@ backups/
 *.backup
 *.old
 
-config/*.yaml
+config/
 CLAUDE.md
 
 # =========================
