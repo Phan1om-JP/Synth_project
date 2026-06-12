@@ -47,22 +47,23 @@ CONFIG = {
     },
 
     "paths": {
-        # ── Task 1 paths (edit to match your Drive layout) ───────────────────
-        "task1_train": "/content/drive/MyDrive/synthrad/Task1/Task1/brain",
-        "task1_val":   "/content/drive/MyDrive/synthrad/Task1_val/Task1/brain",
-        "stats_path":  "/content/drive/MyDrive/synthrad/stats_task1.json",
+        # ── Task 1 paths — data downloaded by scripts/download_synthrad.py ───
+        "task1_train": "/content/storage/Task1/Task1/brain",
+        "task1_val":   "/content/storage/Task1_val/Task1/brain",
+        # stats computed once and cached; delete to force recompute
+        "stats_path":  "/content/storage/stats_task1.json",
 
         # ── Task 2 paths — uncomment and set task: task2 above ───────────────
-        # "task2_train": "/content/drive/MyDrive/synthrad/Task2/Task2/brain",
-        # "task2_val":   "/content/drive/MyDrive/synthrad/Task2_val/Task2/brain",
-        # "stats_path":  "/content/drive/MyDrive/synthrad/stats_task2.json",
+        # "task2_train": "/content/storage/Task2/Task2/brain",
+        # "task2_val":   "/content/storage/Task2_val/Task2/brain",
+        # "stats_path":  "/content/storage/stats_task2.json",
 
-        # cache on local SSD (fast, lost on session end — rebuilds automatically)
-        "cache_dir":      "/content/synthrad_cache",
-
-        # checkpoints + outputs saved to Drive so they survive session timeouts
-        "checkpoint_dir": "/content/drive/MyDrive/synthrad/ckpt/diffusion_task1",
-        "output_dir":     "/content/drive/MyDrive/synthrad/outputs/diffusion_task1",
+        # all under /content/storage/ — fast local SSD, lost on session end
+        # save checkpoints to Drive if you want them to survive timeouts:
+        #   "checkpoint_dir": "/content/drive/MyDrive/synthrad/ckpt/diffusion_task1",
+        "cache_dir":      "/content/storage/cache",
+        "checkpoint_dir": "/content/storage/checkpoints/diffusion_task1",
+        "output_dir":     "/content/storage/outputs/diffusion_task1",
     },
 
     "preprocessing": {
