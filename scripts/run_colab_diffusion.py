@@ -48,8 +48,8 @@ CONFIG = {
 
     "paths": {
         # ── Task 1 paths — data downloaded by scripts/download_synthrad.py ───
-        "task1_train": "/content/storage/Task1/Task1/brain",
-        "task1_val":   "/content/storage/Task1_val/Task1/brain",
+        "task1_train": "/content/storage/Task1/brain",
+        "task1_val":   "/content/storage/Task1_val/brain",
         # stats computed once and cached; delete to force recompute
         "stats_path":  "/content/storage/stats_task1.json",
 

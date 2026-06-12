@@ -5,8 +5,8 @@ Run in Colab:
     !python scripts/download_synthrad.py
 
 After download, data will be at:
-    /content/storage/Task1/Task1/brain/
-    /content/storage/Task1_val/Task1/brain/
+    /content/storage/Task1/brain/
+    /content/storage/Task1_val/brain/
 
 Both zips are removed after extraction to save disk space.
 Total extracted size: ~6-10 GB.
@@ -68,18 +68,18 @@ def main():
             print(f"Removing zip to free space ...")
             os.remove(zip_path)
 
-        # Sanity check
-        brain_dir = os.path.join(out_dir, folder, "brain")
+        # Sanity check — zip extracts flat: Task1/brain/ (not Task1/Task1/brain/)
+        brain_dir = os.path.join(out_dir, "brain")
         if os.path.isdir(brain_dir):
             n = len(os.listdir(brain_dir))
             print(f"  OK  {brain_dir}  ({n} patients)")
         else:
             print(f"  [WARN] Expected brain dir not found: {brain_dir}")
-            print(f"         Check zip structure with: ls {out_dir}")
+            print(f"         Actual contents: {os.listdir(out_dir)}")
 
     print("\nAll done. Paths to use in config:")
-    print(f"  task1_train : {DEST}/Task1/Task1/brain")
-    print(f"  task1_val   : {DEST}/Task1_val/Task1/brain")
+    print(f"  task1_train : {DEST}/Task1/brain")
+    print(f"  task1_val   : {DEST}/Task1_val/brain")
 
 
 if __name__ == "__main__":
