@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config_loader import load_config
 from preprocessing.preprocess import (
     load_or_compute_stats, load_or_compute_stats_task2, scan_patients,
-    preprocess_mr, preprocess_cbct, postprocess_ct, pad_to_target
+    preprocess_mr, preprocess_cbct, postprocess_ct, pad_to_target, find_nii
 )
 from models.unet import UNet2D, UNet3D
 from models.losses import residual_skip
@@ -154,7 +154,7 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
     arch  = cfg["model"].get("architecture", "unet")
     print(f"Model loaded from: {ckpt_path}  (arch={arch})")
 
-    input_file = "cbct.nii.gz" if task == "task2" else "mr.nii.gz"
+    input_stem = "cbct" if task == "task2" else "mr"
     train_key  = "task2_train" if task == "task2" else "task1_train"
     val_key    = "task2_val"   if task == "task2" else "task1_val"
     train_root = cfg["paths"][train_key]
@@ -174,8 +174,8 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
         out_dir = os.path.join(cfg["paths"]["output_dir"], pid)
         os.makedirs(out_dir, exist_ok=True)
 
-        mr_nib   = nib.load(os.path.join(pdir, input_file))
-        mask_nib = nib.load(os.path.join(pdir, "mask.nii.gz"))
+        mr_nib   = nib.load(find_nii(pdir, input_stem))
+        mask_nib = nib.load(find_nii(pdir, "mask"))
         mr_vol   = mr_nib.get_fdata(dtype=np.float32)
         mask_vol = mask_nib.get_fdata(dtype=np.float32)
 
@@ -197,11 +197,14 @@ def run_inference(cfg_path="config/config.yaml", ckpt_path=None, split="train"):
         sct_nib = nib.Nifti1Image(sct, mr_nib.affine, mr_nib.header)
         nib.save(sct_nib, os.path.join(out_dir, "sct.nii.gz"))
 
-        for fname in ["mr.nii.gz", "ct.nii.gz", "mask.nii.gz"]:
-            src = os.path.join(pdir, fname)
-            dst = os.path.join(out_dir, fname)
-            if os.path.exists(src) and not os.path.exists(dst):
-                shutil.copy2(src, dst)
+        for stem in ["mr", "ct", "mask"]:
+            try:
+                src = find_nii(pdir, stem)
+                dst = os.path.join(out_dir, os.path.basename(src))
+                if not os.path.exists(dst):
+                    shutil.copy2(src, dst)
+            except FileNotFoundError:
+                pass
 
     print(f"Inference complete. Outputs in: {cfg['paths']['output_dir']}")
 

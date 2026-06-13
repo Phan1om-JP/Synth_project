@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import default_collate
 
 from preprocessing.preprocess import (
-    pad_to_target, preprocess_mr, preprocess_ct, preprocess_cbct, scan_patients
+    pad_to_target, preprocess_mr, preprocess_ct, preprocess_cbct, scan_patients, find_nii
 )
 from preprocessing.augmentation import (
     apply_augmentation, apply_augmentation_25d
@@ -155,10 +155,11 @@ class PatchDataset3D(Dataset):
 
     def _load_volume(self, patient):
         pdir     = patient["path"]
-        inp_vol  = nib.load(os.path.join(pdir, self.input_file)).get_fdata(dtype=np.float32)
-        ct_vol   = nib.load(os.path.join(pdir, "ct.nii.gz")).get_fdata(dtype=np.float32)
-        mask_vol = nib.load(os.path.join(pdir, "mask.nii.gz")).get_fdata(dtype=np.float32)
-        if self.input_file == "mr.nii.gz":
+        stem     = self.input_file.replace(".nii.gz", "").replace(".nii", "")
+        inp_vol  = nib.load(find_nii(pdir, stem)).get_fdata(dtype=np.float32)
+        ct_vol   = nib.load(find_nii(pdir, "ct")).get_fdata(dtype=np.float32)
+        mask_vol = nib.load(find_nii(pdir, "mask")).get_fdata(dtype=np.float32)
+        if stem == "mr":
             inp_proc = preprocess_mr(inp_vol, mask=mask_vol)
         else:
             inp_proc = preprocess_cbct(inp_vol, self.stats)

@@ -5,6 +5,15 @@ import nibabel as nib
 from tqdm import tqdm
 
 
+def find_nii(folder: str, stem: str) -> str:
+    """Return path to stem.nii.gz or stem.nii, whichever exists."""
+    for ext in (".nii.gz", ".nii"):
+        p = os.path.join(folder, stem + ext)
+        if os.path.exists(p):
+            return p
+    raise FileNotFoundError(f"{stem}.nii.gz / {stem}.nii not found in {folder}")
+
+
 def compute_and_save_stats(train_root, stats_path, ct_clip_min, ct_clip_max):
     patients = scan_patients(train_root, require_ct=True)
     print(f"Computing stats from {len(patients)} patients...")
@@ -13,11 +22,11 @@ def compute_and_save_stats(train_root, stats_path, ct_clip_min, ct_clip_max):
     mr_p01_list, mr_p99_list = [], []
 
     for p in tqdm(patients, desc="Stats"):
-        ct_vol = nib.load(os.path.join(p["path"], "ct.nii.gz")).get_fdata(
+        ct_vol = nib.load(find_nii(p["path"], "ct")).get_fdata(
             dtype=np.float32, caching="unchanged")
-        mr_vol = nib.load(os.path.join(p["path"], "mr.nii.gz")).get_fdata(
+        mr_vol = nib.load(find_nii(p["path"], "mr")).get_fdata(
             dtype=np.float32, caching="unchanged")
-        mask_vol = nib.load(os.path.join(p["path"], "mask.nii.gz")).get_fdata(
+        mask_vol = nib.load(find_nii(p["path"], "mask")).get_fdata(
             dtype=np.float32, caching="unchanged")
 
         ct_clipped = np.clip(ct_vol, ct_clip_min, ct_clip_max)
@@ -104,9 +113,9 @@ def compute_and_save_stats_task2(train_root, stats_path, cbct_clip_min, cbct_cli
     ct_sum,   ct_sq,   ct_n   = 0.0, 0.0, 0
 
     for p in tqdm(patients, desc="Task2 stats"):
-        cbct_vol = nib.load(os.path.join(p["path"], "cbct.nii.gz")).get_fdata(
+        cbct_vol = nib.load(find_nii(p["path"], "cbct")).get_fdata(
             dtype=np.float32, caching="unchanged")
-        ct_vol   = nib.load(os.path.join(p["path"], "ct.nii.gz")).get_fdata(
+        ct_vol   = nib.load(find_nii(p["path"], "ct")).get_fdata(
             dtype=np.float32, caching="unchanged")
 
         cbct_c = np.clip(cbct_vol, cbct_clip_min, cbct_clip_max)
@@ -160,9 +169,9 @@ def cache_patient_slices_task2(patient, cache_dir, stats, cfg):
     p_cache_dir = os.path.join(cache_dir, pid)
     os.makedirs(p_cache_dir, exist_ok=True)
 
-    cbct_vol = nib.load(os.path.join(pdir, "cbct.nii.gz")).get_fdata(dtype=np.float32)
-    ct_vol   = nib.load(os.path.join(pdir, "ct.nii.gz")).get_fdata(dtype=np.float32)
-    mask_vol = nib.load(os.path.join(pdir, "mask.nii.gz")).get_fdata(dtype=np.float32)
+    cbct_vol = nib.load(find_nii(pdir, "cbct")).get_fdata(dtype=np.float32)
+    ct_vol   = nib.load(find_nii(pdir, "ct")).get_fdata(dtype=np.float32)
+    mask_vol = nib.load(find_nii(pdir, "mask")).get_fdata(dtype=np.float32)
 
     cbct_proc = preprocess_cbct(cbct_vol, stats)
     ct_proc   = preprocess_ct(ct_vol, stats)
@@ -226,7 +235,7 @@ def scan_patients(root, require_ct=True):
         except OSError as e:
             print(f"  [WARN] Skipping {pid}: {e}")
             continue
-        if require_ct and "ct.nii.gz" not in files:
+        if require_ct and "ct.nii.gz" not in files and "ct.nii" not in files:
             continue
         patients.append({"patient_id": pid, "path": pdir})
     return patients
@@ -248,9 +257,9 @@ def cache_patient_slices(patient, cache_dir, stats, cfg):
     p_cache_dir = os.path.join(cache_dir, pid)
     os.makedirs(p_cache_dir, exist_ok=True)
 
-    mr_vol   = nib.load(os.path.join(pdir, "mr.nii.gz")).get_fdata(dtype=np.float32)
-    ct_vol   = nib.load(os.path.join(pdir, "ct.nii.gz")).get_fdata(dtype=np.float32)
-    mask_vol = nib.load(os.path.join(pdir, "mask.nii.gz")).get_fdata(dtype=np.float32)
+    mr_vol   = nib.load(find_nii(pdir, "mr")).get_fdata(dtype=np.float32)
+    ct_vol   = nib.load(find_nii(pdir, "ct")).get_fdata(dtype=np.float32)
+    mask_vol = nib.load(find_nii(pdir, "mask")).get_fdata(dtype=np.float32)
 
     mr_proc   = preprocess_mr(mr_vol, mask=mask_vol)
     ct_proc   = preprocess_ct(ct_vol, stats)
