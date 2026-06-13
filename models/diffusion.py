@@ -30,7 +30,7 @@ class TimeEmbedding(nn.Module):
         self.sinusoidal = SinusoidalEmbedding(dim)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim * 4), nn.SiLU(),
-            nn.Linear(dim * 4, dim * 4),
+            nn.Linear(dim * 4, dim),
         )
 
     def forward(self, t):
