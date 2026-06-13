@@ -41,7 +41,7 @@ class SliceDataset2D(Dataset):
 
     def __getitem__(self, idx):
         try:
-            packed = np.load(self.slices[idx])
+            packed = np.load(self.slices[idx]).astype(np.float32)
             inp  = pad_to_target(packed[0], self.target_size, self.target_size)
             ct   = pad_to_target(packed[1], self.target_size, self.target_size)
             mask = pad_to_target(packed[2], self.target_size, self.target_size)
@@ -94,11 +94,11 @@ class SliceDataset25D(Dataset):
             mr_slices = []
             for offset in range(-half, half + 1):
                 fname  = f"{center_idx + offset:04d}.npy"
-                packed = np.load(os.path.join(p_dir, fname))
+                packed = np.load(os.path.join(p_dir, fname)).astype(np.float32)
                 mr_sl  = pad_to_target(packed[0], self.target_size, self.target_size)
                 mr_slices.append(mr_sl)
 
-            center_packed = np.load(os.path.join(p_dir, f"{center_idx:04d}.npy"))
+            center_packed = np.load(os.path.join(p_dir, f"{center_idx:04d}.npy")).astype(np.float32)
             ct   = pad_to_target(center_packed[1], self.target_size, self.target_size)
             mask = pad_to_target(center_packed[2], self.target_size, self.target_size)
 
