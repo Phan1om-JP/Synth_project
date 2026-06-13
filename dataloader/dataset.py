@@ -47,9 +47,9 @@ class SliceDataset2D(Dataset):
             mask = pad_to_target(packed[2], self.target_size, self.target_size)
             if self.augment:
                 inp, ct, mask = apply_augmentation(inp, ct, mask, self.cfg)
-            inp  = torch.from_numpy(inp).unsqueeze(0)
-            ct   = torch.from_numpy(ct).unsqueeze(0)
-            mask = torch.from_numpy(mask).unsqueeze(0)
+            inp  = torch.from_numpy(inp).unsqueeze(0).float()
+            ct   = torch.from_numpy(ct).unsqueeze(0).float()
+            mask = torch.from_numpy(mask).unsqueeze(0).float()
             return inp, ct, mask
         except (OSError, FileNotFoundError) as e:
             print(f"  [WARN] Skipping {self.slices[idx]}: {e}")

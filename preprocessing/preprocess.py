@@ -197,7 +197,7 @@ def cache_patient_slices_task2(patient, cache_dir, stats, cfg):
             continue
         cbct_sl = get_slice(cbct_proc, i)
         ct_sl   = get_slice(ct_proc, i)
-        packed  = np.stack([cbct_sl, ct_sl, mask_sl], axis=0).astype(np.float32)
+        packed  = np.stack([cbct_sl, ct_sl, mask_sl], axis=0).astype(np.float16)
         np.save(os.path.join(p_cache_dir, f"{i:04d}.npy"), packed)
         saved += 1
     return saved
@@ -285,7 +285,7 @@ def cache_patient_slices(patient, cache_dir, stats, cfg):
             continue
         mr_sl = get_slice(mr_proc, i)
         ct_sl = get_slice(ct_proc, i)
-        packed = np.stack([mr_sl, ct_sl, mask_sl], axis=0).astype(np.float32)
+        packed = np.stack([mr_sl, ct_sl, mask_sl], axis=0).astype(np.float16)
         np.save(os.path.join(p_cache_dir, f"{i:04d}.npy"), packed)
         saved += 1
     return saved
