@@ -90,7 +90,7 @@ def run_validation(model, loader, stats, device, diffusion=None, n_ddim_steps=50
     }
 
 
-def train(cfg_path="config/config.yaml", resume_path=None):
+def train(cfg_path="config/config.yaml", resume_path=None, stop_after=None):
     cfg = load_config(cfg_path)
     set_seed(cfg["project"]["seed"])
 
@@ -173,8 +173,9 @@ def train(cfg_path="config/config.yaml", resume_path=None):
 
     epoch_times = deque(maxlen=5)
     train_start = time.time()
+    end_epoch = min(epochs, start_epoch + stop_after - 1) if stop_after else epochs
 
-    for epoch in range(start_epoch, epochs + 1):
+    for epoch in range(start_epoch, end_epoch + 1):
         epoch_start = time.time()
         generator.train()
         epoch_loss = 0.0
@@ -361,5 +362,7 @@ if __name__ == "__main__":
     parser.add_argument("cfg",    nargs="?", default="config/config.yaml")
     parser.add_argument("--resume", default=None,
                         help="Path to checkpoint to resume from")
+    parser.add_argument("--stop_after", type=int, default=None,
+                        help="Stop after this many epochs in this run (for manual checkpointing)")
     args = parser.parse_args()
-    train(args.cfg, resume_path=args.resume)
+    train(args.cfg, resume_path=args.resume, stop_after=args.stop_after)

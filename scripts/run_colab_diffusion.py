@@ -154,6 +154,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", default=None,
                         help="Path to checkpoint to resume from")
+    parser.add_argument("--stop_after", type=int, default=None,
+                        help="Stop after this many epochs (for manual checkpointing)")
     args = parser.parse_args()
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -165,7 +167,7 @@ def main():
     print(f"Config    : {cfg_path}\n")
 
     from scripts.run_training import train
-    train(cfg_path, resume_path=args.resume)
+    train(cfg_path, resume_path=args.resume, stop_after=args.stop_after)
 
 
 if __name__ == "__main__":
