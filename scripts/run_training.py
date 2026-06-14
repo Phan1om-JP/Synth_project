@@ -258,7 +258,10 @@ def train(cfg_path="config/config.yaml", resume_path=None, stop_after=None):
         # Track whether this epoch produced an improvement (for patience)
         improved = False
 
-        ddim_steps = cfg.get("diffusion", {}).get("inference_steps", 50)
+        # val_ddim_steps defaults to 10 for fast training-time validation;
+        # inference_steps (50) is reserved for final inference only
+        ddim_steps = cfg.get("diffusion", {}).get("val_ddim_steps",
+                     cfg.get("diffusion", {}).get("inference_steps", 50))
         if epoch % val_every == 0 or epoch == start_epoch:
             val_metrics = run_validation(generator, hold_loader, stats, device,
                                          diffusion=diffusion, n_ddim_steps=ddim_steps,
