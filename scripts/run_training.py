@@ -351,20 +351,25 @@ def train(cfg_path="config/config.yaml", resume_path=None, stop_after=None):
                 print(f"Early stopping at epoch {epoch}.")
                 break
 
+        # Always overwrite latest.pt so resume always works after a session crash
+        model_state = (generator.module.state_dict()
+                       if hasattr(generator, "module")
+                       else generator.state_dict())
+        latest_data = {
+            "epoch"           : epoch,
+            "model_state"     : model_state,
+            "opt_state"       : opt_G.state_dict(),
+            "history"         : history,
+            "best_val_mae"    : best_val_mae,
+            "patience_counter": patience_counter,
+        }
+        if hybrid_loss_fn is not None:
+            latest_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
+        torch.save(latest_data, os.path.join(ckpt_dir, "latest.pt"))
+
         if epoch % save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch:04d}.pt")
-            model_state = (generator.module.state_dict()
-                           if hasattr(generator, "module")
-                           else generator.state_dict())
-            ckpt_data = {
-                "epoch"      : epoch,
-                "model_state": model_state,
-                "opt_state"  : opt_G.state_dict(),
-                "history"    : history,
-            }
-            if hybrid_loss_fn is not None:
-                ckpt_data["loss_fn_state"] = hybrid_loss_fn.state_dict()
-            torch.save(ckpt_data, ckpt_path)
+            torch.save(latest_data, ckpt_path)
             print(f"  Checkpoint saved: {ckpt_path}")
 
     total_time = time.time() - train_start
