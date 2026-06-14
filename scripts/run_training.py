@@ -174,7 +174,26 @@ def train(cfg_path="config/config.yaml", resume_path=None, stop_after=None):
             hybrid_loss_fn.load_state_dict(ckpt["loss_fn_state"])
         print(f"  Resumed at epoch {start_epoch} | best MAE so far: {best_val_mae:.4f}")
     elif resume_path:
-        print(f"  [WARN] Resume checkpoint not found: {resume_path} — starting fresh")
+        # Requested checkpoint missing — try best_model.pt in the same dir before giving up
+        fallback = os.path.join(ckpt_dir, "best_model.pt")
+        if os.path.isfile(fallback):
+            print(f"  [WARN] {resume_path} not found — falling back to {fallback}")
+            ckpt = torch.load(fallback, map_location=device)
+            model_target = generator.module if hasattr(generator, "module") else generator
+            model_target.load_state_dict(ckpt["model_state"])
+            try:
+                opt_G.load_state_dict(ckpt["opt_state"])
+            except ValueError:
+                print("  [WARN] Optimizer state skipped — using fresh optimizer")
+            start_epoch      = ckpt["epoch"] + 1
+            history          = ckpt.get("history", history)
+            best_val_mae     = ckpt.get("best_val_mae", float("inf"))
+            patience_counter = ckpt.get("patience_counter", 0)
+            if hybrid_loss_fn is not None and "loss_fn_state" in ckpt:
+                hybrid_loss_fn.load_state_dict(ckpt["loss_fn_state"])
+            print(f"  Resumed at epoch {start_epoch} | best MAE so far: {best_val_mae:.4f}")
+        else:
+            print(f"  [WARN] {resume_path} not found and no best_model.pt exists — starting fresh")
 
     # --- CSV metrics logger ---
     log_path = os.path.join(ckpt_dir, "metrics_log.csv")
