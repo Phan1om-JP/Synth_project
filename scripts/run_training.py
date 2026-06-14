@@ -99,11 +99,23 @@ def train(cfg_path="config/config.yaml", resume_path=None, stop_after=None):
 
     task  = cfg.get("task", "task1")
     stats = load_or_compute_stats_task2(cfg) if task == "task2" else load_or_compute_stats(cfg)
-    if cfg["data"]["spatial_mode"] in ("2D", "2.5D") and not resume_path:
-        if task == "task2":
-            build_cache_task2(cfg, stats)
-        else:
-            build_cache(cfg, stats)
+    if cfg["data"]["spatial_mode"] in ("2D", "2.5D"):
+        # Always rebuild cache if missing or empty (happens on fresh Colab/Kaggle sessions
+        # even when resuming from a checkpoint — /tmp/ and /content/ are wiped on restart)
+        cache_dir = cfg["paths"]["cache_dir"]
+        cache_empty = (
+            not os.path.isdir(cache_dir)
+            or not any(
+                f.endswith(".npy")
+                for root, _, files in os.walk(cache_dir)
+                for f in files
+            )
+        )
+        if cache_empty:
+            if task == "task2":
+                build_cache_task2(cfg, stats)
+            else:
+                build_cache(cfg, stats)
 
     tr_loader, hold_loader, _, _ = build_dataloaders(cfg, stats)
     generator, discriminator     = build_model(cfg)
